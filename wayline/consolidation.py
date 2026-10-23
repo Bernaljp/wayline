@@ -31,7 +31,7 @@ from wayline.cli import parse_args
 from wayline.ledger import CONSOLIDATED, LedgerError, ledger_for
 from wayline.project import ProjectError, find_project, policy_for
 
-__all__ = ["SCHEMA", "ROLE", "SECTIONS", "ConsolidationError", "Refused", "estimate", "consolidate", "answer_problems",
+__all__ = ["SCHEMA", "ROLE", "SECTIONS", "ConsolidationError", "Refused", "refusal", "estimate", "consolidate", "answer_problems",
            "consolidate_command"]
 
 SCHEMA = "consolidation"
@@ -76,7 +76,7 @@ def _current(book, section):
             if not (sections.is_inherited(item) and item.get("standing") in sections.STANDINGS)]
 
 
-def _refusal(section):
+def refusal(section):
     if section == sections.RESULTS:
         return "Results is its findings, which the reports present one result at a time; a consolidation rewrites %s" % (
             ", ".join(sections.TITLES[name] for name in SECTIONS))
@@ -186,14 +186,14 @@ def _lint_problems(project, current, passages, by_id, classify):
 def consolidate(project, section, *, harness_root=HARNESS_ROOT, policy=None):
     """Run the one read-only writer session and write what it returns: `{section, replaced, written, model}`.
 
-    Raises Refused before any launch (see `_refusal`, and a section with fewer than two current passages), and
+    Raises Refused before any launch (see `refusal`, and a section with fewer than two current passages), and
     ConsolidationError when the answer still fails its checks after one resume, or when a passage it replaces was replaced
     while it ran; nothing is written then.
     """
     project = Path(project).resolve()
-    refusal = _refusal(section)
-    if refusal is not None:
-        raise Refused(refusal)
+    refused = refusal(section)
+    if refused is not None:
+        raise Refused(refused)
     book = ledger_for(project)
     sections.render_section(book, section)  # the owner's pending edit of the file is taken in before the session reads it
     current = _current(book, section)
@@ -265,9 +265,9 @@ def consolidate_command(args):
         return code
     try:
         project = find_project(options.project)
-        refusal = _refusal(options.section)
-        if refusal is not None:
-            raise Refused(refusal)
+        refused = refusal(options.section)
+        if refused is not None:
+            raise Refused(refused)
         if not options.yes:
             cost = estimate(project, options.section)
             if options.json:

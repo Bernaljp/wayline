@@ -1082,6 +1082,30 @@ body[data-read-only="true"] .acts { display: none !important; }
 /* The page scrolls clear of the button, so its last row is never under it. */
 main { padding-bottom: calc(var(--space-6) + var(--space-5)); }
 
+/* --- the cards a button opens, the paper's parts, and the compilations (ticket 121) ------------------- */
+
+/* A card opens under its section, the chat's card as it is; the paper order's readiness list keeps its lines. */
+.card-place:not(:empty) { margin-top: var(--space-3); }
+.card-what { white-space: pre-line; }
+.chat-card .card-what { font-size: var(--text-sm); }
+#paper-order-body p.inline, #paper-compilations-body p.inline { margin-top: var(--space-3); }
+#paper-order-body select, #paper-compilations-body select { max-width: 100%; }
+/* A compilation's four downloads, side by side while they fit; a mark when a part changed after it was made. */
+.downloads { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.row-more.stale { color: var(--paused); font-weight: 600; }
+.s-compiled, .s-in-the-paper { --status: var(--done); }
+.s-partial, .s-changed-since-composed { --status: var(--paused); }
+/* The hand-over of a reference: a DOI or a title, a PDF dropped, then drop it or keep the claim marked. */
+.hand-over-form { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
+.hand-over-form .note { margin: 0; }
+.hand-over input[type="text"] {
+  flex: 1 1 16em; min-width: 0; min-height: 30px; padding: var(--space-1) var(--space-2);
+  font: var(--text-sm) / 1.5 var(--ui); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line-strong); border-radius: var(--radius-1);
+}
+.hand-over-drop { padding: var(--space-3); }
+.hand-over-drop input[type="file"] { max-width: 100%; }
+
 /* --- the narrow width, and reduced motion ----------------------------------------------------- */
 
 @media (max-width: 1180px) {
@@ -1102,6 +1126,9 @@ main { padding-bottom: calc(var(--space-6) + var(--space-5)); }
   .tail li { flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
   .tail .ts, .tail .event { flex: 0 0 auto; }
   form.inline label { min-width: 0; }
+  /* The selects and the hand-over's field take the width, their buttons under them where they do not fit. */
+  #paper-order-body select, #paper-compilations-body select, #plotting-select { flex: 1 1 100%; }
+  .hand-over input[type="text"], select, input[type="file"] { min-height: 44px; }
   /* On a phone the viewer is the whole screen, with buttons a thumb can hit. */
   dialog#viewer { width: 100vw; height: 100dvh; margin: 0; border: 0; border-radius: 0; }
   .viewer-body { padding: var(--space-3) var(--space-4); }

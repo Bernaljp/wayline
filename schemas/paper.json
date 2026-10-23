@@ -90,6 +90,22 @@
     "concerns": {"type": "array", "description": "how the writer says the paper answers each concern kept for the order (ticket 117)",
                  "items": {"type": "object", "required": ["id", "answer"], "additionalProperties": false,
                            "properties": {"id": {"type": "string", "pattern": "^K[1-9][0-9]*$"}, "answer": {"type": "string"}}}},
+    "chosen": {
+      "type": "array",
+      "description": "the alternatives the owner chose since this version was composed (ticket 121, `wayline paper choose`), in order; `before` holds each compilation's `compiled` stamp at the choice, so a compilation still carrying that stamp was made before the part changed. The next order writes a record without it.",
+      "items": {
+        "type": "object",
+        "required": ["part", "alternative", "at", "before"],
+        "additionalProperties": false,
+        "properties": {
+          "part": {"type": "string", "pattern": "^[a-z]+$"},
+          "alternative": {"type": "string", "pattern": "^[a-z]+-[1-9][0-9]*$"},
+          "at": {"type": "string"},
+          "kept": {"type": ["string", "null"], "description": "the alternative the replaced text was kept as, when no alternative held it"},
+          "before": {"type": "object", "additionalProperties": {"type": "string"}}
+        }
+      }
+    },
     "usage": {"type": ["object", "null"], "description": "the writer session's token usage, its turns, and its duration"}
   },
   "$defs": {

@@ -585,6 +585,35 @@ class OrderRunTest(DrawingRunCase):
         self.assertIn("is not recorded", record["outputs"]["latex"]["problem"])
         self.assertIn("compilation plain of version 1: failed", driven.out.getvalue())
 
+    def ended_notice(self, writer):
+        """The notice the order's end sent, with the writer answering `writer` (a fake's respond, or an envelope twice)."""
+        from wayline import notify
+        self.ledger.append_event("run_started", {"resume": False, "harness_tag": None, "autonomy": "interactive",
+                                                 "radius": "moderate", "pid": 1})
+        self.ledger.append_event("run_ended", {"reason": "objectives_closed"})
+        paper.order(self.project, start=None)
+        from tests.test_builds import Verifier  # ticket 117's gates run after the composition
+        notices = []
+        with worker.use_fake() as fake:
+            fake.script(respond=self.plotter(), role="plotter")
+            for _ in range(2):
+                fake.script(writer, role="writer") if isinstance(writer, Envelope) else fake.script(respond=writer, role="writer")
+            for _ in range(3):
+                fake.script(respond=Verifier(), role="verifier")
+            driven = self.conductor()
+            driven.notify = lambda event, text, project=None, ticket=None: notices.append((event, text))
+            self.until(driven, lambda: False)
+        [text] = [text for event, text in notices if event == notify.PAPER_ENDED]
+        return text
+
+    def test_the_orders_end_is_a_notice_when_composed(self):
+        """Ticket 121: an order's end notifies; `notify.holds` keeps it back under `autonomous` alone."""
+        self.assertIn("paper order 1 composed: research/paper/PAPER.md says what was made; compiled as plain (failed)",
+                      self.ended_notice(Writer(self.project)))
+
+    def test_the_orders_end_is_a_notice_when_it_failed(self):
+        self.assertIn("paper order 1 failed: ", self.ended_notice(Envelope(structured_output=None, errors=["no answer"])))
+
     def test_a_composition_that_fails_closes_the_order_and_is_said(self):
         self.ledger.append_event("run_started", {"resume": False, "harness_tag": None, "autonomy": "interactive",
                                                  "radius": "moderate", "pid": 1})

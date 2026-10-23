@@ -47,6 +47,13 @@ is JSON too: `{"ok": true, "action": ...}` with what the function reported, or `
 "error": ...}` under a 4xx status that says why nothing was done. A `switch` away from a project
 whose conductor has to drain answers 202 at once and finishes in a thread, because the drain lasts
 as long as that conductor's running workers do.
+
+**The cards and the new actions** (ticket 121): every write the Paper and Run views make calls the verb the conversation
+and a terminal use. A button's card is `GET .../cards/<action>` (`button_card`: the paper order, a compilation for
+another venue, a consolidation, the repository made public), built by code with no model and no write, and its Confirm
+posts the card's `args` to the action the chat's card runs. `ACTIONS` grows by exactly `compile` (`wayline paper compile
+<venue> --yes`), `plotting` (`wayline switch --plotting`), `reference` (`wayline reference <slug> <answer>`, or a PDF as
+the body), and `choose` (`wayline paper choose <part>-<n>`).
 """
 
 import argparse
@@ -68,10 +75,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from wayline import HARNESS_ROOT, RESEARCH_VERSION, TAG, dag, dashboard_views, decisions
-from wayline.ledger import TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, Ledger, atomic_write, conductor_holder
+from wayline.ledger import TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, Ledger, atomic_write, conductor_holder, now_ts
 from wayline.project import (
     FINDINGS, HARNESS_JSON, NEEDS_HUMAN_NOTES, RESEARCH, ProjectError, active_path, answer, control, home, is_project, policy_for, rung_label,
-    read_active, read_harness, read_jobs, read_projects, set_autonomy, set_ladder_changes, set_model_fallback, set_pacing,
+    read_active, read_harness, read_jobs, read_projects, set_autonomy, set_ladder_changes, set_model_fallback, set_pacing, set_plotting,
     old_project_problem, research_version, status_view, steer_ticket, switch_project,
 )
 from wayline.provenance import MANIFEST as MANIFEST_JSON, read_manifest, sha256_of
@@ -130,6 +137,11 @@ CONTENT_TYPES = {
     ".webp": "image/webp",
     ".woff": "font/woff",
     ".woff2": "font/woff2",
+    # A compilation's downloads (ticket 121).
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".zip": "application/zip",
+    ".tex": "text/x-tex; charset=utf-8",
 }
 # The documentation site's pages are model-written, so they are served in a sandbox: an opaque origin whose
 # scripts can neither read the dashboard's pages (and the token they carry) nor act as the owner. The page's
@@ -141,16 +153,22 @@ TEXT_TYPE = "text/plain; charset=utf-8"
 # The actions of Implementation Decisions 8 this dashboard takes (ticket 35), in the order the spec lists them.
 # `mark` is the marks view's (ticket 112): the one action decision 17 adds for it. The six after it are what a card of the
 # chat runs on the owner's Confirm (ticket 114): the routing table's confirmed verbs, each the function its verb calls.
-# The last two are the editor's saves (ticket 113): `edit`, a section or the outline, and `reason`, one parameter's.
+# The two after them are the editor's saves (ticket 113): `edit`, a section or the outline, and `reason`, one parameter's.
+# The last four are ticket 121's, each the function a verb calls: `compile` (`wayline paper compile <venue> --yes`, a card's
+# Confirm), `plotting` (`wayline switch --plotting`, Run's select), `reference` (`wayline reference <slug> <answer>`, the
+# hand-over form), and `choose` (`wayline paper choose <part>-<n>`, an alternative chosen in Paper).
 ACTIONS = ("answer", "autonomy", "pause", "resume", "switch", "cancel", "rerun", "pacing", "model_fallback", "ladder_changes", "intake", "feedback",
            "mark", "run", "stop_when", "budget", "consolidate", "paper", "public",
-           "edit", "reason")
+           "edit", "reason",
+           "compile", "plotting", "reference", "choose")
 ACTION_ROUTE = re.compile(r"^/api/projects/(?P<project>[^/]+)/actions/(?P<name>[^/]+)/?$")
 # The chat (ticket 114): a message posted, and the owner's Confirm or Not now on one message's card.
 CHAT_ROUTE = re.compile(r"^/api/projects/(?P<project>[^/]+)/chat/?$")
 CARD_ROUTE = re.compile(r"^/api/projects/(?P<project>[^/]+)/chat/(?P<number>[1-9][0-9]*)/card/?$")
 # The header an intake drop names its file in, and the largest JSON body any other action reads.
 FILENAME_HEADER = "X-Wayline-Filename"
+# The header a PDF handed over for a reference names its dossier in (ticket 121).
+REFERENCE_HEADER = "X-Wayline-Reference"
 JSON_BODY_MAX = 64 * 1024
 # The editor's save carries a whole section, which a long Results or Methods outgrows 64 KiB by (ticket 113).
 EDIT_BODY_MAX = 4 * 1024 * 1024
@@ -1235,6 +1253,9 @@ class DashboardServer(ThreadingHTTPServer):
         # The long actions a card runs on a thread (a consolidation, the paper), by project and name: one of each at a time.
         self.working = set()
         self.working_lock = threading.Lock()
+        # What a button's action on a thread said once its 202 had gone (ticket 121), by project and then action: the
+        # Paper and Run views show it, until that action is asked again. A chat card keeps its own on the card.
+        self.late = {}
         super().__init__(address, handler)
 
     def shutdown(self):
@@ -1278,6 +1299,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/edit/(?P<target>[^/]+)/?$"), "api_edit"),
         (CHAT_ROUTE, "api_chat"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/paper/card/?$"), "api_paper_card"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/cards/(?P<action>[^/]+)/?$"), "api_card"),
         (ACTION_ROUTE, "api_action_get"),
     )
 
@@ -1337,7 +1359,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return None
         try:
             project = self._project(match.group("project"))
-            status, report = run_action(name, project, body, self.headers, self.server)
+            late = self.server.late.setdefault(str(project), {}) if hasattr(self.server, "late") else {}
+            late.pop(name, None)
+            status, report = run_action(name, project, body, self.headers, self.server,
+                                        on_failure=lambda failure: late.__setitem__(name, {"error": str(failure), "at": now_ts()}))
         except ActionConflict as failure:
             return self._action_reply(HTTPStatus.CONFLICT, dict({"ok": False, "action": name, "error": str(failure)},
                                                                 **failure.details))
@@ -1422,7 +1447,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         raw = (self.headers.get("Content-Length") or "0").strip()
         if not raw.isdigit():
             return refuse(HTTPStatus.BAD_REQUEST, "Content-Length is %r, which is not a byte count" % raw)
-        length, cap = int(raw), _intake_cap() if name == "intake" else EDIT_BODY_MAX if name == "edit" else JSON_BODY_MAX
+        length, cap = int(raw), _intake_cap() if name in ("intake", "reference") else EDIT_BODY_MAX if name == "edit" else JSON_BODY_MAX
         if length > cap:
             return refuse(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "the body is %d bytes, over the %d an %s action takes%s" % (
                 length, cap, name, "; run wayline intake <path> on the workstation for a file this large" if name == "intake" else ""))
@@ -1598,15 +1623,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def api_decisions(self, query, project):
         """The decisions view (ticket 35), tagged by the ledger, which holds `DECISIONS.md` and `harness.json`, and by the active pointer."""
         path = self._project(project)
+        late = self._late(path)
         tag = etag("decisions", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)), _active_version(),
-                   dashboard_views.software_snapshot(path))
+                   dashboard_views.software_snapshot(path), late)
         if self._not_modified(tag):
             return None
         view = decisions.decisions_view(path)
         read = {}
         for entry in view["open"]:  # the new decision kinds get a card of their own on Run (ticket 110)
             entry["kind"], entry["about"] = dashboard_views.decision_kind(path, entry.get("origin"), read)
-        return self._json(view, tag)
+        return self._json(dict(view, late=late), tag)
 
     def api_changes(self, query, project):
         """The evolve loop's view (ticket 45): the feedback filed and what was made of each item, and the change records."""
@@ -1637,11 +1663,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def api_paper(self, query, project):
         """The Paper view (ticket 111), tagged by the ledger, the section files, and the minute a reference gives up at."""
         path = self._project(project)
+        late = self._late(path)
         tag = etag("paper", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)),
-                   dashboard_views.paper_snapshot(path))
+                   dashboard_views.paper_snapshot(path), late)
         if self._not_modified(tag):
             return None
-        return self._json(dashboard_views.paper_view(path), tag)
+        return self._json(dict(dashboard_views.paper_view(path), late=late), tag)
 
     def api_inherited(self, query, project):
         """The Inherited view (ticket 111), tagged by the ledger and the section files; a project with no documents has none."""
@@ -1712,6 +1739,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return None
         return self._json(chat.thread_view(path, records), tag)
 
+    def _late(self, path):
+        """What a button's action on a thread said after its reply had gone, for this project: `{action: {error, at}}`."""
+        return dict(getattr(self.server, "late", {}).get(str(path)) or {})
+
     def api_paper_card(self, query, project):
         """The paper order's card (ticket 115): the readiness list and the cost, built by code with no model call, which
         the `paper` action's Confirm acts on; tagged by the ledger it is read from."""
@@ -1723,6 +1754,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         found = paper.card(path)
         found["text"] = paper.card_text(found)
         return self._json(found, tag)
+
+    def api_card(self, query, project, action):
+        """The card a button opens (ticket 121), the one the chat shows for the same action: `{action, args, what, cost,
+        confirm}`, built by code with no model call and no write; its Confirm posts `args` to `actions/<action>`. Never
+        cached: a card is read once, when the owner asks for it."""
+        if action not in BUTTON_CARDS:
+            return self._send(HTTPStatus.NOT_FOUND, json.dumps({"found": False, "line": "no card %r; the cards are %s" % (
+                action, ", ".join(BUTTON_CARDS))}).encode("utf-8"), JSON_TYPE, (("Cache-Control", "no-store"),))
+        found = button_card(self._project(project), action, {key: values[0] for key, values in query.items() if values})
+        return self._send(HTTPStatus.OK, json.dumps(found, ensure_ascii=False, default=str).encode("utf-8"), JSON_TYPE,
+                          (("Cache-Control", "no-store"),))
 
     def api_action_get(self, query, project, name):
         """An action asked for with `GET`: 405, with the method it takes."""
@@ -1959,8 +2001,18 @@ def run_action(name, project, body, headers=None, server=None, on_failure=None):
             raise DashboardError(str(failure)) from None
     if name == "paper":
         from wayline import paper  # the paper order reads every part of the ledger
-        _fields(body)
-        return HTTPStatus.OK, paper.order(project, by="owner")
+        venue = _string(_fields(body, (), ("venue",)), "venue", required=False)
+        return HTTPStatus.OK, paper.order(project, by="owner", venue=venue or None)
+    if name == "choose":
+        from wayline import paper
+        if (str(project), "compile") in getattr(server, "working", _WORKING):
+            raise ActionConflict("a compilation is being made; choose once it has ended, or it would carry the part as it was")
+        return HTTPStatus.OK, paper.choose(project, _string(_fields(body, ("alternative",)), "alternative"))
+    if name == "plotting":
+        library = _string(_fields(body, ("library",)), "library")
+        return _on_a_thread(server, project, name, lambda: set_plotting(project, library, by="dashboard"), on_failure)
+    if name == "reference":
+        return _reference(project, body, headers or {})
     if name == "mark":
         return _mark(project, _fields(body, ("batch",), ("item", "mark", "note", "defaults")))
     if name == "switch":
@@ -1971,6 +2023,45 @@ def run_action(name, project, body, headers=None, server=None, on_failure=None):
     if name in CARD_ACTIONS:
         return _card_action(name, project, body, server, on_failure)
     raise DashboardError("no action %r; the actions are %s" % (name, ", ".join(ACTIONS)))
+
+
+_SLUG = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$")  # a dossier's directory under research/refs/, as its schema spells it
+
+
+def _reference(project, body, headers):
+    """The hand-over form (ticket 121), `wayline reference <slug> <answer>`'s function, `dossier.hand_over`: a JSON
+    `{slug, answer}` takes a DOI, an arXiv id, an exact title, or "leave it" (the claim kept marked "to be resolved");
+    a PDF dropped is the body itself, `Content-Type: application/pdf`, named in `X-Wayline-Filename` and its reference in
+    `X-Wayline-Reference`, kept as the reference's source as the verb keeps a PDF it is given. "Drop it" is the paper
+    order's batch, the `mark` action."""
+    from wayline import dossier as dossiers
+    import tempfile
+    if (headers.get("Content-Type") or "").split(";")[0].strip().lower() == "application/pdf":
+        slug = headers.get(REFERENCE_HEADER) or ""
+        if not slug:
+            raise DashboardError("a PDF handed over names its reference in the %s header" % REFERENCE_HEADER)
+        named = Path(unquote(headers.get(FILENAME_HEADER) or "")).name
+        if not named.lower().endswith(".pdf") or named.startswith("."):
+            raise DashboardError("a PDF handed over is named <name>.pdf in the %s header, got %r" % (FILENAME_HEADER, named))
+        if not body.startswith(b"%PDF-"):
+            raise DashboardError("%s is no PDF: a PDF starts with %%PDF-" % named)
+        answer = None
+    else:
+        fields = _fields(body, ("slug", "answer"))
+        slug, answer = _string(fields, "slug"), _string(fields, "answer")
+        if answer.strip().lower().endswith(".pdf"):  # what `hand_over` would read as a path on this machine
+            raise DashboardError("a DOI, an exact title, or leave it is typed; a PDF is dropped on the form, never named by its path")
+    if not _SLUG.match(slug):
+        raise DashboardError("a reference is named by its dossier's slug, as References lists it, got %r" % (slug,))
+    try:
+        if answer is not None:
+            return HTTPStatus.OK, dossiers.hand_over(project, slug, answer)
+        with tempfile.TemporaryDirectory(prefix="wayline-handed-") as scratch:
+            path = Path(scratch) / named
+            path.write_bytes(body)
+            return HTTPStatus.OK, dossiers.hand_over(project, slug, str(path))
+    except dossiers.DossierError as failure:
+        raise DashboardError(str(failure)) from None
 
 
 def _edit(name, project, body):
@@ -1992,8 +2083,9 @@ def _edit(name, project, body):
         raise ActionConflict(str(failure), {"current": failure.current, "yours": failure.yours}) from None
 
 
-# The actions a chat's card runs on the owner's Confirm (ticket 114), each the function its confirmed verb calls.
-CARD_ACTIONS = ("run", "stop_when", "budget", "consolidate", "paper", "public")
+# The actions a chat's card runs on the owner's Confirm (ticket 114), each the function its confirmed verb calls; `compile`,
+# a compilation for another venue, is ticket 121's.
+CARD_ACTIONS = ("run", "stop_when", "budget", "consolidate", "paper", "public", "compile")
 
 
 def _card_action(name, project, body, server, on_failure=None):
@@ -2022,7 +2114,79 @@ def _card_action(name, project, body, server, on_failure=None):
         from wayline import consolidation
         section = _string(_fields(body, ("section",)), "section")
         return _on_a_thread(server, project, name, lambda: consolidation.consolidate(project, section), on_failure)
+    if name == "compile":
+        return _compile(project, _string(_fields(body, ("venue",)), "venue"), server, on_failure)
     raise DashboardError("no card action %r; the cards' actions are %s" % (name, ", ".join(CARD_ACTIONS)))
+
+
+def _compile(project, venue, server, on_failure=None):
+    """`wayline paper compile <venue> --yes`: the current version compiled for `venue` alone, refused while an order is open
+    (its paper is not composed yet) and for a venue with no guidelines; on a thread of its own, since the tools take
+    minutes and a paper over the venue's limit gets one fitting session."""
+    from wayline import compilations
+    try:
+        compilations.refuse_alone(compilations.card(project, venue))
+    except compilations.CompilationError as failure:
+        raise DashboardError(str(failure)) from None
+    return _on_a_thread(server, project, "compile", lambda: compilations.compile_paper(project, venue), on_failure)
+
+
+# The cards a button opens (ticket 121): the confirmed actions the Paper view starts. The chat's other cards (the run, the
+# stopping rule, a budget) are the conversation's alone.
+BUTTON_CARDS = ("paper", "compile", "consolidate", "public")
+
+
+def button_card(project, action, query):
+    """The card of one button, `{action, args, what, cost, confirm}` and what the card itself read, with no model call:
+    the paper order's readiness list (with the venue `query` names, if any), a compilation's venue, a consolidation's
+    estimate, or the repository made public. A request the action would refuse is refused here, as a DashboardError."""
+    from wayline import compilations, paper
+    venue = query.get("venue") or None
+    try:
+        if action == "paper":
+            found = paper.card(project, venue=venue)
+            return dict(found, action=action, args={"venue": venue} if venue else {}, what=paper.card_text(found))
+        if action == "compile":
+            if not venue:
+                raise DashboardError("a compilation names its venue: cards/compile?venue=<slug>")
+            found = compilations.card(project, venue)
+            return dict(found, action=action, args={"venue": venue}, what=compilations.card_text(found))
+        if action == "consolidate":
+            return _consolidation_card(project, query.get("section") or "")
+        return _public_card(project)
+    except (paper.PaperError, compilations.CompilationError) as failure:
+        raise DashboardError(str(failure)) from None
+
+
+def _consolidation_card(project, section):
+    from wayline import consolidation, sections
+    refusal = consolidation.refusal(section)
+    if refusal is not None:
+        raise DashboardError(refusal)
+    cost = consolidation.estimate(project, section)
+    if cost["passages"] < 2:
+        raise DashboardError("%s has %d current passage(s): there is nothing to consolidate" % (sections.TITLES[section], cost["passages"]))
+    what = ("A consolidation of %s: one read-only writer session on %s %s reads its %d current passages (%d characters) and "
+            "rewrites them into fewer that keep every tag, by: consolidation." % (
+                sections.TITLES[section], cost["model"], cost["effort"], cost["passages"], cost["chars"]))
+    return dict(cost, action="consolidate", args={"section": section}, what=what,
+                cost="about %s tokens of the writer's model" % "{:,}".format(cost["tokens"]),
+                confirm="wayline consolidate %s --yes" % section)
+
+
+def _public_card(project):
+    from wayline import code_repository
+    record = code_repository.record(project)
+    remote = record.get("remote") or {}
+    if not remote.get("repository"):
+        raise DashboardError("the code repository has no remote yet; the setup question makes one")
+    if record.get("visibility") == "public":
+        raise DashboardError("%s is public already" % remote["repository"])
+    return {"action": "public", "args": {}, "repository": remote["repository"], "url": remote.get("url"),
+            "what": "Make %s public: anyone can then read the history of code/, and every later push is public too."
+                    % remote["repository"],
+            "cost": "No tokens, but it cannot be undone: once public, the code may be copied before it is made private again.",
+            "confirm": "make %s public" % remote["repository"]}
 
 
 def _start_run(project):
@@ -2047,7 +2211,7 @@ _WORKING_LOCK = threading.Lock()
 
 def _on_a_thread(server, project, name, work, on_failure=None):
     """Run `work` on a thread of its own, one of each `name` at a time per project, and answer once it has ended or
-    `SWITCH_REPLY_S` has passed: 200 when it ended, its own refusal (a section with nothing to consolidate, a venue with no
+    `SWITCH_REPLY_S` has passed: 200 with what it reported when it ended, its own refusal (a section with nothing to consolidate, a venue with no
     guidelines) raised as the verb would raise it, else 202 with what started.
 
     What it writes lands in the ledger as the verb's would, and the views read it there. A failure after the reply has
@@ -2089,7 +2253,8 @@ def _on_a_thread(server, project, name, work, on_failure=None):
         if not thread.is_alive():
             if "failure" in outcome:
                 raise outcome["failure"]
-            return HTTPStatus.OK, {"done": name}
+            report = outcome.get("report")
+            return HTTPStatus.OK, dict(report, done=name) if isinstance(report, dict) else {"done": name}
     return HTTPStatus.ACCEPTED, {"started": name}
 
 

@@ -60,7 +60,7 @@ from wayline.tools import Tools, ToolOutput, ToolsError, failure_line, run_recor
 __all__ = [
     "CompilationError", "COMPILATIONS", "PLAIN", "RECORD_JSON", "SCHEMA", "FITTING_SCHEMA", "FILTER", "MARK", "FITTING_COST",
     "compile_paper", "after_order", "last_retry", "card", "card_text", "read_compilation", "fitting_problems", "tag_text",
-    "plan_citations", "recording_runner", "recorded_runner", "compile_command",
+    "plan_citations", "recording_runner", "recorded_runner", "compile_command", "read_compilations", "made_before", "refuse_alone",
 ]
 
 COMPILATIONS = "compilations"            # research/paper/compilations/<name>/
@@ -152,6 +152,37 @@ def read_compilation(project_or_ledger, name):
         return book.read_json("%s/%s" % (_compilation_dir(name), RECORD_JSON))
     except FileNotFoundError:
         return None
+
+
+def read_compilations(project_or_ledger):
+    """Every compilation's record under `research/paper/compilations/`, `plain` first and then the venues by name; one whose
+    record is missing or unreadable is left out."""
+    book = ledger_for(project_or_ledger)
+    root = book.path("%s/%s" % (paper.PAPER_DIR, COMPILATIONS))
+    try:
+        names = sorted(path.name for path in root.iterdir() if path.is_dir() and not path.name.startswith("."))
+    except OSError:
+        return []
+    found = []
+    for name in sorted(names, key=lambda name: (name != PLAIN, name)):
+        try:
+            record = read_compilation(book, name)
+        except (OSError, ValueError):
+            continue
+        if isinstance(record, dict) and record.get("name") == name:
+            found.append(record)
+    return found
+
+
+def made_before(record, compiled):
+    """The parts a choice of an alternative changed since `compiled`, one compilation's record, was made: each part chosen
+    while the compilation still carried the `compiled` stamp the choice recorded for it (ticket 121). `record` is the
+    paper's version record; the next order writes one without choices, so the mark lasts until then or a new compilation."""
+    parts = []
+    for choice in (record or {}).get("chosen") or []:
+        if (choice.get("before") or {}).get(compiled.get("name")) == compiled.get("compiled") and choice["part"] not in parts:
+            parts.append(choice["part"])
+    return parts
 
 
 def _venue(harness_root, venue):
@@ -884,6 +915,15 @@ def card(project, venue, harness_root=HARNESS_ROOT):
             "open": paper.open_order(book), "confirm": "wayline paper compile %s --yes" % venue}
 
 
+def refuse_alone(found):
+    """Refuse a compilation alone that `found`, its card, says cannot be made now: no paper composed yet, or an order open,
+    whose paper is not composed yet. The verb and the dashboard's `compile` action both ask this."""
+    if found["version"] is None:
+        raise CompilationError("no paper is composed yet: the paper order composes it, and every order compiles it plainly")
+    if found["open"]:
+        raise CompilationError("paper order %d is open: compile once its paper is composed" % found["open"]["order"])
+
+
 def card_text(found):
     lines = ["Compile the paper for %s (%s): a compilation alone, typeset and checked under its guidelines; nothing is "
              "submitted." % (found["display_name"], found["venue"]), ""]
@@ -922,8 +962,7 @@ def compile_command(args):
         if not options.yes:
             print(json.dumps(found, indent=2, default=str) if options.json else card_text(found))
             return 0
-        if found["open"]:
-            raise CompilationError("paper order %d is open: compile once its paper is composed" % found["open"]["order"])
+        refuse_alone(found)
         made = compile_paper(project, options.venue)
     except (CompilationError, paper.PaperError) as failure:
         print("wayline paper compile: %s" % failure, file=sys.stderr)

@@ -49,6 +49,23 @@ lists it read-only, marked with its tag.
   `paper_code`), `paper.json` gains `code`, and `PAPER.md` a "Code at the order" section. The account's "Waiting on you"
   now lists a code repository still private at a paper order (it read the retired `paper_started` event before).
 
+- The dashboard's cards and new actions (ticket 121; Implementation Decisions 17 and 8). Buttons in the Paper view open
+  the cards the chat shows, read from `GET /api/projects/<id>/cards/<action>` with no model and no write: order the paper
+  (its readiness list and cost, with an optional venue), compile for another venue, ask for a consolidation, and make
+  the code repository public; Confirm posts the card's own arguments to the action the chat's Confirm runs, and Not now
+  sends nothing. The Paper view lists the paper's parts with their versions and alternatives, its earlier versions, and
+  each compilation with downloads of the PDF, the `.docx`, the LaTeX directory as a `.zip`, and the Markdown copy. A
+  reference not yet resolved gets a hand-over form: a DOI or an exact title back to the scout and a PDF dropped as its
+  source (`wayline reference`), and "drop it" or "keep the claim marked 'to be resolved'" (the paper order's batch through
+  `mark`, or `wayline reference <slug> "leave it"` with no order asking). Run's controls gain a select of the plotting
+  library (`switch --plotting`). The `ACTIONS` whitelist grows by exactly `compile`, `plotting`, `reference`, and
+  `choose`, each refused without the token; `paper` takes an optional `venue`. New verb `wayline paper choose <part>-<n>`
+  (`paper.choose`): an alternative's text becomes its part's, free, text no alternative held is kept as the next one,
+  and `paper.json`'s new `chosen` marks each compilation "made before part X changed" until it is compiled again or the
+  next order (`compilations.made_before`). The chat's cards take the same arguments: `paper` an optional `venue` and a
+  new `compile` card a `venue` (`chat.CARD_FIELDS`, the `chat_reply` schema, the session's card list). A paper order's
+  end notifies the owner outside `autonomous` (`notify.PAPER_ENDED`), composed or failed.
+
 - The dashboard edits the sections and the outline (ticket 113; Implementation Decisions 17 and 8). Introduction,
   Results, Discussion, Methods, and the outline each get an edit button in the Paper view, opening a plain text editor on
   the rendered file. Its save is the new `wayline edit <section|outline>` verb (`wayline.edits`): the text is written back

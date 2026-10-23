@@ -39,9 +39,11 @@ every autonomy), or a marked placeholder until said.
 **Versions.** Each order makes a new version, the previous one frozen under `research/paper/earlier/v<n>/`. A re-order
 recomposes only the parts whose inputs changed (`part_inputs`; the title and abstract whenever a main-text part did) and
 keeps an owner's edit of a part file unless its inputs changed; the writer always reads the whole version. The writer
-offers three titles; other alternatives only when asked. A composition is one build: `composed` carries its number and
-leaves the order open for its gates, and a later build is `compose` with `rebuild`, the points standing (`wayline.builds`,
-ticket 117); the figures are 116's, the compilations 118's. Nothing here submits anything anywhere.
+offers three titles; other alternatives only when asked. The owner chooses one with `wayline paper choose <part>-<n>`
+(`choose`, ticket 121), free: its text becomes the part's, and each compilation is "made before part X changed" until it
+is compiled again or the next order. A composition is one build: `composed` carries its number and leaves the order open
+for its gates, and a later build is `compose` with `rebuild`, the points standing (`wayline.builds`, ticket 117); the
+figures are 116's, the compilations 118's. Nothing here submits anything anywhere.
 """
 
 import argparse
@@ -61,7 +63,7 @@ __all__ = [
     "PaperError", "PAPER_DIR", "PARTS", "MAIN_TEXT", "SCHEMA", "RECORD_SCHEMA", "FRONT_SCHEMA", "PAPER_MD", "PAPER_JSON",
     "FRONT_JSON", "EARLIER", "COST", "PLACEHOLDER", "BATCH_KIND", "readiness", "card", "card_text", "batch_items", "open_order",
     "order", "waiting_on", "answers", "compose", "fail", "check_structure", "inherited_kept", "kept_problems", "part_inputs",
-    "front_text", "read_front", "set_front", "read_record", "paper_command",
+    "front_text", "read_front", "set_front", "read_record", "paper_command", "choose", "alternatives_of", "alternative_text",
 ]
 
 PAPER_DIR = "paper"                       # research/paper/
@@ -336,14 +338,26 @@ def readiness(project):
     return items
 
 
-def card(project):
-    """What the owner confirms, with no model call: the readiness list, the cost, the order open if one is, and the verb."""
+def _venue_named(venue, harness_root):
+    """The guidelines of `venue`, a slug of `guidelines/`, or PaperError for one with none."""
+    from wayline import guidelines
+    try:
+        return guidelines.read_guidelines(harness_root, venue)
+    except (guidelines.GuidelinesError, ValidationError) as failure:
+        raise PaperError("no venue %s to compile for: %s" % (venue, failure)) from None
+
+
+def card(project, venue=None, harness_root=HARNESS_ROOT):
+    """What the owner confirms, with no model call: the readiness list, the cost, the order open if one is, and the verb;
+    with `venue`, the venue the order also compiles for (ticket 121), refused when `guidelines/` has none."""
     book = ledger_for(project)
     from wayline import outline
+    named = _venue_named(venue, harness_root)["display_name"] if venue else None
     structure, _ = _guard(outline.paper_structure, book)
     results = len([entry for entry in (structure or {}).get("results", []) if re.match(r"^R[1-9][0-9]*$", entry["key"])])
     return {"readiness": readiness(book.project), "cost": COST, "main_results": results, "open": open_order(book),
-            "confirm": "wayline paper --yes", "blocks": False}
+            "confirm": "wayline paper --yes" + (" --for %s" % venue if venue else ""), "blocks": False, "venue": venue,
+            "display_name": named}
 
 
 def card_text(found):
@@ -354,6 +368,9 @@ def card_text(found):
                                      ("%d" % len(item["lines"]) if item["lines"] else item["empty"])))
         if len(item["lines"]) > 1:
             lines += ["   - %s" % line for line in item["lines"]]
+    if found.get("venue"):
+        lines += ["", "Once composed, the paper is compiled plainly and for %s (%s), typeset and checked under its guidelines; a "
+                      "paper over its limits gets one fitting session (about $3)." % (found["display_name"], found["venue"])]
     lines += ["", "Cost: %s; this outline has %d main-text result(s), one figure each." % (found["cost"], found["main_results"])]
     if found["open"]:
         lines.append("Paper order %d is open; a new one waits until it is composed." % found["open"]["order"])
@@ -495,13 +512,10 @@ def order(project, by=OWNER, start=_STARTS, venue=None, harness_root=HARNESS_ROO
     stopped), so the order's own run ends the same way; None while a run was going, which resumes after the paper.
     `venue`, a slug of `guidelines/`, is compiled for beside `compilations/plain/` once the paper is composed (ticket 118).
     """
-    from wayline import guidelines, replay
+    from wayline import replay
     project = Path(project).resolve()
     if venue is not None:
-        try:
-            guidelines.read_guidelines(harness_root, venue)
-        except (guidelines.GuidelinesError, ValidationError) as failure:
-            raise PaperError("no venue %s to compile for: %s" % (venue, failure)) from None
+        _venue_named(venue, harness_root)
     book = ledger_for(project)
     with book.lock():
         events = _events(book)
@@ -757,6 +771,79 @@ def set_front(project, values):
             raise PaperError(str(failure)) from None
         book.write_json(FRONT_JSON, record, schema=FRONT_SCHEMA)
     return record
+
+
+# --- choosing an alternative (ticket 121) ---------------------------------------------------------------------------
+
+_ALTERNATIVE = re.compile(r"^([a-z]+)-([1-9][0-9]*)$")
+_WHY = re.compile(r"\n*<!-- why: .*? -->\s*\Z", re.S)
+
+
+def alternative_text(text):
+    """An alternative's text as its part would hold it: the writer's `<!-- why: ... -->` line taken off."""
+    return _WHY.sub("", str(text or "")).strip()
+
+
+def alternatives_of(book, record, part):
+    """`[(name, text)]` of `part`'s alternatives in the version record, in number order; one whose file is gone is left out."""
+    found = []
+    for name in (record or {}).get("alternatives") or []:
+        match = _ALTERNATIVE.match(name)
+        if not match or match.group(1) != part:
+            continue
+        try:
+            text = book.path(_paper("%s/%s.md" % (ALTERNATIVES, name))).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        found.append((int(match.group(2)), name, alternative_text(text)))
+    return [(name, text) for _, name, text in sorted(found)]
+
+
+def choose(project, alternative):
+    """`wayline paper choose <part>-<n>`: the owner's choice of one of the paper's alternatives, free (decision 17).
+
+    Writes the alternative's text into its part's file, as an owner's edit of the part would, so the next order keeps it
+    unless the part's inputs change. Text the part held that no alternative holds (an owner's own edit) is kept first as
+    the part's next alternative, so no choice loses a word. Each compilation made before the choice is "made before part
+    X changed" until it is compiled again or the next order: `paper.json`'s `chosen` records each compilation's stamp at
+    the choice (`compilations.made_before`). Refused while an order is open, whose writer recomposes the parts. Returns
+    `{part, alternative, changed, kept, made_before}`, `made_before` naming the compilations the choice marked.
+    """
+    from wayline import compilations
+    project = Path(project).resolve()
+    match = _ALTERNATIVE.match(str(alternative or ""))
+    if not match:
+        raise PaperError("an alternative is named <part>-<n>, as PAPER.md lists them (title-2), got %r" % (alternative,))
+    part = match.group(1)
+    book = ledger_for(project)
+    with book.lock():
+        opened = open_order(book)
+        if opened is not None:
+            raise PaperError("paper order %d is open; choose once its paper is composed" % opened["order"])
+        record = read_record(book)
+        if record is None:
+            raise PaperError("no paper is composed yet: the paper order composes it, with its alternatives")
+        held = dict(alternatives_of(book, record, part))
+        if part not in WRITTEN or alternative not in held:
+            raise PaperError("no alternative %s in version %d; its alternatives are %s" % (
+                alternative, record["version"], ", ".join(record.get("alternatives") or []) or "none"))
+        text = held[alternative]
+        current = (_file_text(book, part) or "").strip()
+        if current == text:
+            return {"part": part, "alternative": alternative, "changed": False, "kept": None, "made_before": []}
+        kept = None
+        if current and current not in held.values():
+            number = 1 + max(int(_ALTERNATIVE.match(name).group(2)) for name in held)
+            kept = "%s-%d" % (part, number)
+            book.write_markdown(_paper("%s/%s.md" % (ALTERNATIVES, kept)),
+                                "%s\n\n<!-- why: the text %s.md held before you chose %s -->\n" % (current, part, alternative))
+            record["alternatives"] = sorted(set(record["alternatives"]) | {kept})
+        book.write_markdown(_paper("%s.md" % part), text + "\n")
+        before = {item["name"]: item["compiled"] for item in compilations.read_compilations(book)}
+        record["chosen"] = list(record.get("chosen") or []) + [
+            {"part": part, "alternative": alternative, "at": now_ts(), "kept": kept, "before": before}]
+        book.write_json(_paper(PAPER_JSON), record, schema=RECORD_SCHEMA)
+    return {"part": part, "alternative": alternative, "changed": True, "kept": kept, "made_before": sorted(before)}
 
 
 # --- the composition ------------------------------------------------------------------------------------------------
@@ -1186,19 +1273,22 @@ def _report(record, recompose, answer, payload, checks, code=None):
 
 def paper_command(args):
     """`wayline paper [--yes] [--for <slug>] [--json] [--project <path>]`, `wayline paper front - [--project <path>]`,
-    `wayline paper compile <slug> [--yes] [--json] [--project <path>]`, and `wayline paper builds more|keep|objectives
-    [--project <path>]`.
+    `wayline paper compile <slug> [--yes] [--json] [--project <path>]`, `wayline paper choose <part>-<n>`, and
+    `wayline paper builds more|keep|objectives [--project <path>]`.
 
     Alone it prints the order's card and does nothing else; with `--yes`, the owner's confirmation, it makes the order,
     which compiles the paper plainly and for the venue `--for` names. `paper front -` records the front matter the owner
     gave, a JSON object on stdin; `paper compile` compiles the current version for another venue (ticket 118); `paper
-    builds` is the owner's choice after a paper not passed (ticket 117).
+    choose` puts one of the alternatives in its part (ticket 121); `paper builds` is the owner's choice after a paper
+    not passed (ticket 117).
     """
     if args and args[0] == "front":
         return _front_command(args[1:])
     if args and args[0] == "compile":
         from wayline import compilations
         return compilations.compile_command(args[1:])
+    if args and args[0] == "choose":
+        return _choose_command(args[1:])
     if args and args[0] == "builds":
         from wayline import builds
         return builds.builds_command(args[1:])
@@ -1215,7 +1305,7 @@ def paper_command(args):
     try:
         project = find_project(options.project)
         if not options.yes:
-            found = card(project)
+            found = card(project, venue=options.venue)
             print(json.dumps(found, indent=2, default=str) if options.json else card_text(found))
             return 0
         made = order(project, venue=options.venue)
@@ -1238,6 +1328,38 @@ def paper_command(args):
     else:
         print("A conductor was started for it%s; once the paper is composed its run ends as the last one did (%s)."
               % (" (%s)" % made["started"] if made["started"] else "", made["run"]))
+    return 0
+
+
+def _choose_command(args):
+    parser = argparse.ArgumentParser(prog="wayline paper choose", description="choose one of the paper's alternatives (title-2): "
+                                     "its text becomes the part's, free, and each compilation is made before the part changed "
+                                     "until it is compiled again")
+    parser.add_argument("alternative", help="the alternative, <part>-<n>, as PAPER.md lists them")
+    parser.add_argument("--project", help="the project; the active one by default")
+    parser.add_argument("--json", action="store_true", help="print what was done as JSON")
+    options, code = parse_args(parser, args)
+    if options is None:
+        return code
+    try:
+        project = find_project(options.project)
+        done = choose(project, options.alternative)
+    except PaperError as failure:
+        print("wayline paper choose: %s" % failure, file=sys.stderr)
+        return 2
+    except (ProjectError, LedgerError, OSError, ValueError) as failure:
+        print("wayline paper choose: %s" % failure, file=sys.stderr)
+        return 1
+    if options.json:
+        print(json.dumps(done, indent=2))
+    elif not done["changed"]:
+        print("research/paper/%s.md already holds %s" % (done["part"], done["alternative"]))
+    else:
+        print("research/paper/%s.md now holds %s%s." % (done["part"], done["alternative"],
+                                                       "; its text before is kept as %s" % done["kept"] if done["kept"] else ""))
+        if done["made_before"]:
+            print("Compilations made before %s changed until compiled again or the next order: %s." % (
+                done["part"], ", ".join(done["made_before"])))
     return 0
 
 

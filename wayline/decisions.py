@@ -48,7 +48,7 @@ import json
 import time
 from pathlib import Path
 
-from wayline import HARNESS_ROOT, grill, pacing, replay
+from wayline import HARNESS_ROOT, grill, pacing, plotting, replay
 from wayline.ledger import DECISION, DECISION_OPENED, TICKET_CREATED, TICKET_RERUN, Ledger
 from wayline.notify import notify as send_notification
 from wayline.project import (
@@ -654,6 +654,9 @@ def decisions_view(project):
             "ladder_changes": ladder,
             "ladder_changes_stated": ladder_stated,
             "ladder_changes_levels": list(LADDER_CONSENTS),
+            # Run's select of the plotting library (ticket 121), set through `switch --plotting`'s function.
+            "plotting": plotting.setting(harness),
+            "plotting_levels": [{"library": name, "label": library.label} for name, library in plotting.LIBRARIES.items()],
             "paused_by_owner": view.paused_by_owner,
             "active": active is not None and active.resolve() == project,
         },
