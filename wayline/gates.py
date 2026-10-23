@@ -680,12 +680,14 @@ def verdict_env(project, run_dir):
     return {"WAYLINE_PROJECT": str(project), "WAYLINE_RUN": str(run_dir)}
 
 
-def verdict_prompt(role, subject_kind, subject, question, paths, scope_limit, cwd=None, memo=None):
+def verdict_prompt(role, subject_kind, subject, question, paths, scope_limit, cwd=None, memo=None, told=None):
     """The verifier's prompt: the question, the scope limit, the paths, the protocol, the schema.
 
     No `/wayline-<skill>` line and no inlined skill: the verifier carries none of the author's
     skills (decision 11). A path that is not there is said to be missing where it is listed, so a
-    session cannot mistake an absent artifact for one it read.
+    session cannot mistake an absent artifact for one it read. `told` is what the caller tells every
+    session of the gate beside the paths: the kill argument on the paper is told the general report's
+    last verdict (ticket 117).
     """
     lines = [
         "# The verdict you are being asked for",
@@ -712,6 +714,8 @@ def verdict_prompt(role, subject_kind, subject, question, paths, scope_limit, cw
     if not paths:
         lines.append("- [wayline: no path was given with this question. Say so as a finding rather than answering it.]")
     parts = ["\n".join(lines)]
+    if told:
+        parts.append("# What you are told\n\n%s" % str(told).strip())
     if memo is not None:
         parts.append("\n".join([
             "# The rejection memo to adjudicate",
@@ -755,7 +759,7 @@ def findings_text(findings, empty="no finding was named"):
 def verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
             verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None, ledger=None,
             cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None, code_rule=None, inherited=None,
-            objectives=None):
+            objectives=None, told=None):
     """One Type-B verdict, journaled: every verdict in the harness comes through here.
 
     A verdict is journaled because its session id and its model are the whole of what makes it
@@ -766,7 +770,7 @@ def verdict(subject_kind, subject, question, paths, scope_limit, *, project, aut
                          author_model=author_model, verdict_type=verdict_type, ticket=ticket,
                          harness_root=harness_root, policy=policy, cwd=cwd, memo=memo,
                          run_dir=run_dir, role=role, fall_back=fall_back, rung=rung, code_rule=code_rule, inherited=inherited,
-                         objectives=objectives)
+                         objectives=objectives, told=told)
     ledger_for(ledger or Path(project).resolve()).append_event(
         VERDICT, taken.payload, ticket=taken.ticket, session_id=taken.session_id)
     return taken
@@ -788,7 +792,7 @@ def verdict_for(ask, **context):
 def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project, author_model,
                  verdict_type, ticket=None, harness_root=HARNESS_ROOT, policy=None,
                  cwd=None, memo=None, run_dir=None, role=VERIFIER, fall_back=None, rung=None, code_rule=None, inherited=None,
-                 objectives=None):
+                 objectives=None, told=None):
     """One verifier session, validated but not journaled; `verdict` is this plus the journal.
 
     `role` names the judging role, the verifier unless a decision names another; whichever it
@@ -840,7 +844,7 @@ def take_verdict(subject_kind, subject, question, paths, scope_limit, *, project
                         "from nothing else" % (role.source, role.name))
     run_dir = Path(run_dir) if run_dir else verdict_dir(project, subject_kind, subject)
     cwd = Path(cwd) if cwd else project
-    prompt = verdict_prompt(role, subject_kind, subject, question, paths, scope_limit, cwd=cwd, memo=memo)
+    prompt = verdict_prompt(role, subject_kind, subject, question, paths, scope_limit, cwd=cwd, memo=memo, told=told)
     request = worker.LaunchRequest(
         role=role.name, model=model, effort=effort, prompt=prompt,
         agent_json=role.agent_json(model, effort, _budget(policy, "max_turns")),
@@ -1246,7 +1250,7 @@ WRITING_DIFFICULTY = 3
 
 
 def kill_argument(paths, *, project, author_model, subject_kind="paper", subject=None,
-                  harness_root=HARNESS_ROOT, policy=None, ledger=None, cwd=None, fall_back=None, file=None):
+                  harness_root=HARNESS_ROOT, policy=None, ledger=None, cwd=None, fall_back=None, file=None, told=None):
     """The two-thread gate: one session writes the memo, a second adjudicates it, one verdict comes back.
 
     Both threads are the verifier role on separate fresh sessions, on the model `policy.verifier`
@@ -1263,7 +1267,9 @@ def kill_argument(paths, *, project, author_model, subject_kind="paper", subject
     rejection anyone could write against these paths was empty.
 
     `file(project, ledger, adjudication, paths, memo)` files the scope-down of a fail in place of the paper's `writing`
-    ticket: the general report's names the findings it may narrow (`wayline.run_end`, ticket 103).
+    ticket: the general report's names the findings it may narrow (`wayline.run_end`, ticket 103); a build of the paper
+    files none, and its standing points go to the next build's writer (`wayline.builds`, ticket 117). `told` reaches
+    both threads beside the paths: a build of the paper tells them the general report's last verdict.
     """
     paths = [str(item) for item in (paths or [])]
     if not paths:
@@ -1275,7 +1281,7 @@ def kill_argument(paths, *, project, author_model, subject_kind="paper", subject
     fall_back = _fall_back_for(project, policy, author_model, fall_back,
                                "the kill argument on the %s %s" % (subject_kind, subject))
     common = dict(project=project, author_model=author_model, harness_root=harness_root,
-                  policy=policy, cwd=cwd, fall_back=fall_back)
+                  policy=policy, cwd=cwd, fall_back=fall_back, told=told)
     memo = take_verdict(subject_kind, subject, MEMO_QUESTION, paths, MEMO_SCOPE,
                         verdict_type=KILL_MEMO, run_dir=run_dir / "memo", **common)
     adjudication = verdict(subject_kind, subject, ADJUDICATION_QUESTION, paths, ADJUDICATION_SCOPE,

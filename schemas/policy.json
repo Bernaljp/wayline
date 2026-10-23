@@ -289,6 +289,13 @@
         "max_headline": {"type": "integer", "minimum": 0}
       }
     },
+    "paper": {
+      "type": "object",
+      "description": "the paper order (Implementation Decision 17; wayline.builds, ticket 117): the builds one order runs at most, each a writer pass and its three gates; after them the paper is not passed and the owner may choose as many more",
+      "required": ["builds"],
+      "additionalProperties": false,
+      "properties": {"builds": {"type": "integer", "minimum": 1}}
+    },
     "repeats": {
       "type": "object",
       "description": "the repeated-claims check (Implementation Decision 17; wayline.repeats): the embedding model's cosine at or above which a pair of claims is proposed to the confirmer, and the most pairs the net proposes in one check, the most similar first",

@@ -17,8 +17,8 @@ the owner wants to tell the project goes to the conversation. Then, in order, wi
 - **Waiting on you**: the decision tickets for the owner, the tickets needing a person, the proposed global
   harness changes (one wording: `wayline evolve --apply <id>`), the important unresolved references whose failure is
   final (ticket 105: the owner named it, or a standing passage, a concern, or an objective cites it), the reports
-  edited and not yet turned into passages, a code repository still private at the order, and the outline's open
-  proposals as one line with their count (ticket 104).
+  edited and not yet turned into passages, a code repository still private at the order, the outline's open
+  proposals as one line with their count (ticket 104), and a paper not passed whose choice is the owner's (ticket 117).
 - **Changed without asking you**: every passage and finding journaled with `replaces_owner` (ticket 88), each with
   the owner's passage (or the consolidation made from the owner's text) it replaced, its reason, and its evidence; a
   consolidation the owner asked for is not listed (ticket 90).
@@ -301,7 +301,15 @@ def _waiting(context):
     lines.extend(_edited_reports(context))
     lines.extend(_private_repository(context))
     lines.extend(_outline_proposals(context))
+    lines.extend(_paper_not_passed(context))
     return lines
+
+
+def _paper_not_passed(context):
+    """A paper whose last build failed, waiting on the owner's choice (ticket 117): three more builds, keep it, or the
+    points as objectives. Under `autonomous` this line is all that asks."""
+    from wayline import builds  # the builds read the paper, which reads every record
+    return builds.waiting_lines(context.events)
 
 
 def _outline_proposals(context):

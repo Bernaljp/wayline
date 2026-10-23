@@ -418,6 +418,10 @@ def request_for(project, plan, figure, plots=None):
     for panel in panels:
         panel.pop("headline", None)
     request.update(mode="planned", panels=panels, data=_data(book, paths))
+    from wayline import builds
+    concerns = builds.change_requests(book.project)
+    if concerns:
+        request["change_requests"] = concerns  # the concerns kept for the order reach the figure finish (ticket 117)
     return request
 
 
@@ -430,7 +434,8 @@ def _key(project, request):
     panels = [(panel["plot"], panel["drawing"], panel["library"], digest(panel["png"]), digest(panel["svg"]), digest(panel.get("script")))
               for panel in request.get("panels") or []]
     return hashlib.sha256(json.dumps([request["mode"], panels, [(entry["path"], entry["sha256"]) for entry in request["data"]],
-                                      request["target"]], sort_keys=True).encode("utf-8")).hexdigest()
+                                      request["target"]] + ([request["change_requests"]] if request.get("change_requests") else []),
+                                     sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def make_figures(project, plan, previous=None, *, harness_root=None, policy=None, say=None):

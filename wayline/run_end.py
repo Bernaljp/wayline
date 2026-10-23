@@ -37,7 +37,7 @@ from wayline.stopping import BUDGET_SPENT, FRONTIER_EMPTY, GOAL_REACHED, OBJECTI
 __all__ = [
     "RULE_ENDS", "ONCE_ENDS", "NO_GATE_ENDS", "STALL_STRICT", "SAMPLED_CACHE", "REPORT_SUBJECT", "KILL_ORIGIN",
     "runs_gates", "continues", "report_text", "report_digest", "kill_subject", "last_kill", "last_kill_verdict", "read_sampled",
-    "candidate_sentences", "sampled_verdicts", "kill_owed", "kill_argument", "is_scope_down", "scope_downs", "targets",
+    "candidate_sentences", "sampled_verdicts", "sample_new", "kill_owed", "kill_argument", "is_scope_down", "scope_downs", "targets",
     "check_scope_down", "pending", "owed", "failed_marks", "MAX_ROUNDS", "rounds", "is_gate_event",
 ]
 
@@ -187,12 +187,26 @@ def sampled_verdicts(project, *, harness_root=HARNESS_ROOT, policy=None, classif
     `provenance.verify_claims`'s, which skips a claim already judged and files a failing one's scope-down.
     """
     project = Path(project).resolve()
-    book = Ledger(project)
-    policy = policy_for(project, harness_root) if policy is None else policy
-    outcome = {"new": 0, "sampled": 0, "passed": [], "failed": [], "tickets": [], "waiting": [], "fell_back": []}
     text = report_text(project)
     if text is None:
-        return outcome
+        return _outcome()
+    return sample_new(project, text, provenance.REPORT_PATH, harness_root=harness_root, policy=policy, classifier=classifier)
+
+
+def _outcome():
+    return {"new": 0, "sampled": 0, "passed": [], "failed": [], "tickets": [], "waiting": [], "fell_back": [], "claims": {}}
+
+
+def sample_new(project, text, document, *, harness_root=HARNESS_ROOT, policy=None, classifier=None, prose_author=None,
+               scope_down=True):
+    """Sampled verdicts on the claims of `text` never sampled, judged as claims of `document`: the general report's, and
+    the paper's at each build (ticket 117), which shares the sample cache, so a claim the report or an earlier build
+    sampled is not drawn again. `claims` in what it returns maps each judged subject to its sentence. A build's failing
+    claim files no scope-down (`scope_down=False`): its points go to the next build."""
+    project = Path(project).resolve()
+    book = Ledger(project)
+    policy = policy_for(project, harness_root) if policy is None else policy
+    outcome = _outcome()
     classes = provenance.read_claims_cache(book)
     pending = [sentence.text for sentence in candidate_sentences(text) if provenance.sentence_hash(sentence.text) not in classes]
     if pending:
@@ -206,17 +220,19 @@ def sampled_verdicts(project, *, harness_root=HARNESS_ROOT, policy=None, classif
         for claim in new:
             entry = cache.setdefault(claim.digest, {"drawn": []})
             if claim in drawn:
-                entry["drawn"].append(provenance.claim_subject(claim))
+                entry["drawn"].append(provenance.claim_subject(claim, document))
         if new:
             book.write_json(SAMPLED_CACHE, {"schema_version": 1, "claims": dict(sorted(cache.items()))})
     outcome["new"], outcome["sampled"] = len(new), len(drawn)
     events, _ = book.read_events()
     judged = _judged(events)
-    owed = [claim for claim in claims if provenance.claim_subject(claim) in _drawn(cache.get(claim.digest))
-            and provenance.claim_subject(claim) not in judged]
+    owed = [claim for claim in claims if provenance.claim_subject(claim, document) in _drawn(cache.get(claim.digest))
+            and provenance.claim_subject(claim, document) not in judged]
+    outcome["claims"] = {provenance.claim_subject(claim, document): claim.text for claim in owed}
     if not owed:
         return outcome
-    judged = provenance.verify_claims(project, harness_root=harness_root, policy=policy, chosen=owed)
+    judged = provenance.verify_claims(project, harness_root=harness_root, policy=policy, chosen=owed, document=document,
+                                      text=text, prose_author=prose_author, scope_down=scope_down)
     for key in ("passed", "failed", "tickets", "waiting", "fell_back"):
         outcome[key] = judged[key]
     return outcome

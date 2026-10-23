@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
-from tests.test_paper import PaperCase, Writer, asked
+from tests.test_paper import PaperCase, Writer, asked, close_as_passed
 from wayline import batches, figure_checks, figure_role, paper, paper_figures, worker
 from wayline.worker import Envelope
 
@@ -435,6 +435,7 @@ class ComposeFiguresTest(PlannedFigureCase):
             record = paper.compose(self.project, payload)
             self.calls = [call.request.role for call in fake.calls]
         self.writer = writer
+        close_as_passed(self.project, payload)
         return record
 
     def test_code_writes_each_figure_and_its_caption_and_paper_md_its_plan_line(self):

@@ -845,6 +845,14 @@ class _Run:
                   "is its `panel:<letter>`); with Altair as the panel chart's `description`, its aria-label; with any other writer "
                   "as the panel group's id or its `<title>`. The composed-panels check fails a figure missing one: here %s." % (
                       figure_checks.PLOT_MARKER % "<id>", ", ".join(figure_checks.PLOT_MARKER % panel["plot"] for panel in panels))]
+        concerns = self.request.get("change_requests") or []
+        if concerns:
+            # The concerns kept for the paper order (ticket 117): where this figure bears on one, finish it so it answers
+            # it, never so it asserts what the data do not; one it cannot answer is said in the notes.
+            start += ["", "The concerns kept for the paper order, points a critique raised that the paper answers. Where this "
+                      "figure bears on one, finish it so it answers it, never so it asserts what the data do not show; say "
+                      "in the notes which it answers and which it cannot:"]
+            start += ["- `%s`: %s" % (item["id"], item["text"]) for item in concerns]
         return self.finish(start)
 
     def _planned_checks(self):
