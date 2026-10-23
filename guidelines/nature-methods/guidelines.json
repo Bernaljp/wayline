@@ -40,7 +40,9 @@
   "reference_style": {
     "style": "Numbered, Nature Portfolio house style; about 50 references as guidance.",
     "max_count": null,
-    "citation": "numbered"
+    "citation": "numbered",
+    "csl": "nature.csl",
+    "bibtex": false
   },
   "reporting_checklists": [
     {

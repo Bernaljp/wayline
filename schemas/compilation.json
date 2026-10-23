@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "compilation",
+  "description": "One compilation's record (Implementation Decision 17; ticket 118): research/paper/compilations/<name>/compilation.json, written only by wayline.compilations through the ledger, `plain` at every paper order and a venue's slug for a venue. The paper's version it typeset, each of the four outputs (and a BibTeX venue's .bib) with its file or why it was not made, the class and the CSL style it used, the citations as code planned them, the scout's last retry at the order, the venue's checks on the compiled output, the fitting session when the paper exceeded a limit, and any tag text found in an output, which must be none.",
+  "type": "object",
+  "required": ["name", "venue", "paper_version", "compiled", "outcome", "outputs", "document_class", "class_vendored", "csl", "bibtex", "pages", "tools", "citations", "retried", "checks", "fitting", "tag_text"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "plain, or the venue's slug: the directory under compilations/"},
+    "venue": {"type": ["string", "null"]},
+    "paper_version": {"type": "integer", "minimum": 1},
+    "compiled": {"type": "string"},
+    "outcome": {"enum": ["compiled", "partial", "failed"], "description": "compiled when all four outputs were made and no tag text survived"},
+    "outputs": {
+      "type": "object",
+      "required": ["latex", "pdf", "docx", "markdown"],
+      "additionalProperties": false,
+      "properties": {
+        "latex": {"$ref": "#/$defs/output"}, "pdf": {"$ref": "#/$defs/output"}, "docx": {"$ref": "#/$defs/output"},
+        "markdown": {"$ref": "#/$defs/output"}, "bibtex": {"$ref": "#/$defs/output"}
+      }
+    },
+    "document_class": {"type": "string", "description": "the LaTeX class: the venue's where one is vendored, article otherwise"},
+    "class_vendored": {"type": "boolean"},
+    "csl": {"type": ["string", "null"], "description": "the venue's CSL style under guidelines/<venue>/, null for pandoc's default"},
+    "bibtex": {"type": "boolean", "description": "a BibTeX venue: the LaTeX cites through natbib and references.bib is written"},
+    "pages": {"type": ["integer", "null"], "minimum": 0, "description": "the compiled PDF's page count as pdfinfo read it"},
+    "tools": {"type": "object", "additionalProperties": {"type": ["string", "null"]}, "description": "the version of each tool called, from tools.json"},
+    "citations": {
+      "type": "object",
+      "required": ["cited", "to_be_resolved", "dropped"],
+      "additionalProperties": false,
+      "properties": {
+        "cited": {"type": "array", "items": {"type": "string"}, "description": "the slugs of the works cited, in first-citation order"},
+        "to_be_resolved": {"type": "array", "items": {"type": "string"}, "description": "unresolved works whose claims are kept marked \"to be resolved\", never cited"},
+        "dropped": {"type": "array", "items": {"type": "object", "required": ["work", "why"], "additionalProperties": false,
+                                               "properties": {"work": {"type": "string"}, "why": {"type": "string"}}}}
+      }
+    },
+    "retried": {
+      "type": ["object", "null"],
+      "description": "the paper order's last retry of the unresolved cited works; null for a compilation alone",
+      "required": ["asked", "found", "still"],
+      "additionalProperties": false,
+      "properties": {
+        "asked": {"type": "array", "items": {"type": "string"}}, "found": {"type": "array", "items": {"type": "string"}},
+        "still": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "checks": {"type": "array", "items": {"type": "object", "required": ["check", "level", "message"], "additionalProperties": false,
+                                          "properties": {"check": {"type": "string"}, "level": {"enum": ["ok", "skipped", "warn", "fail"]},
+                                                         "message": {"type": "string"}}},
+               "description": "the venue's checks on the compiled output, after the fitting when there was one; empty for plain"},
+    "fitting": {
+      "type": ["object", "null"],
+      "description": "the one fitting session, when the paper exceeded a limit",
+      "required": ["limits", "outcome", "problems", "moved", "model", "session_id", "usage"],
+      "additionalProperties": false,
+      "properties": {
+        "limits": {"type": "array", "items": {"type": "string"}},
+        "outcome": {"enum": ["fitted", "refused", "not run"]},
+        "problems": {"type": "array", "items": {"type": "string"}},
+        "moved": {"type": "array", "items": {"type": "string"}},
+        "model": {"type": ["string", "null"]},
+        "session_id": {"type": ["string", "null"]},
+        "usage": {"type": ["object", "null"]},
+        "still_over": {"type": "array", "items": {"type": "string"}, "description": "the limits the fitted paper still exceeds"}
+      }
+    },
+    "tag_text": {"type": "array", "items": {"type": "string"}, "description": "tags found written in an output: none in a compilation"}
+  },
+  "$defs": {
+    "output": {
+      "type": "object",
+      "required": ["file", "problem"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {"type": ["string", "null"], "description": "relative to the compilation's directory"},
+        "problem": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

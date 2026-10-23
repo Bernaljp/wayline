@@ -1,0 +1,282 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[
+]{article}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{longtable,booktabs,array}
+\usepackage{caption}
+\captionsetup[table]{skip=6pt}
+\newcounter{none} % for unnumbered tables
+\usepackage{calc} % for calculating minipage widths
+% Correct order of tables after \paragraph or \subparagraph
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+% Allow footnotes in longtable head/foot
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+\usepackage{graphicx}
+\makeatletter
+\newsavebox\pandoc@box
+\newcommand*\pandocbounded[1]{% scales image to fit in text height/width
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi% select the smaller of both
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox{\pandoc@box}%
+  \fi%
+}
+% Set default figure placement to htbp
+\def\fps@figure{htbp}
+\makeatother
+% definitions for citeproc citations
+\NewDocumentCommand\citeproctext{}{}
+\NewDocumentCommand\citeproc{mm}{%
+  \begingroup\def\citeproctext{#2}\cite{#1}\endgroup}
+\makeatletter
+ % allow citations to break across lines
+ \let\@cite@ofmt\@firstofone
+ % avoid brackets around text for \cite:
+ \def\@biblabel#1{}
+ \def\@cite#1#2{{#1\if@tempswa , #2\fi}}
+\makeatother
+\newlength{\cslhangindent}
+\setlength{\cslhangindent}{1.5em}
+\newlength{\csllabelwidth}
+\setlength{\csllabelwidth}{3em}
+\newenvironment{CSLReferences}[2] % #1 hanging-indent, #2 entry-spacing
+ {\begin{list}{}{%
+  \setlength{\itemindent}{0pt}
+  \setlength{\leftmargin}{0pt}
+  \setlength{\parsep}{0pt}
+  % turn on hanging indent if param 1 is 1
+  \ifodd #1
+   \setlength{\leftmargin}{\cslhangindent}
+   \setlength{\itemindent}{-1\cslhangindent}
+  \fi
+  % set entry spacing
+  \setlength{\itemsep}{#2\baselineskip}}}
+ {\end{list}}
+\usepackage{calc}
+\newcommand{\CSLBlock}[1]{\hfill\break\parbox[t]{\linewidth}{\strut\ignorespaces#1\strut}}
+\newcommand{\CSLLeftMargin}[1]{\parbox[t]{\csllabelwidth}{\strut#1\strut}}
+\newcommand{\CSLRightInline}[1]{\parbox[t]{\linewidth - \csllabelwidth}{\strut#1\strut}}
+\newcommand{\CSLIndent}[1]{\hspace{\cslhangindent}#1}
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\makeatletter
+\@ifpackageloaded{subcaption}{}{\usepackage{subcaption}}
+\@ifpackageloaded{caption}{}{\usepackage{caption}}
+\captionsetup[subfigure]{margin=0.5em}
+\AtBeginDocument{%
+\renewcommand*\figurename{Figure}
+\renewcommand*\tablename{Table}
+}
+\AtBeginDocument{%
+\renewcommand*\listfigurename{List of Figures}
+\renewcommand*\listtablename{List of Tables}
+}
+\newcounter{pandoccrossref@subfigures@footnote@counter}
+\newenvironment{pandoccrossrefsubfigures}{%
+\setcounter{pandoccrossref@subfigures@footnote@counter}{0}
+\begin{figure}\centering%
+\gdef\global@pandoccrossref@subfigures@footnotes{}%
+\DeclareRobustCommand{\footnote}[1]{\footnotemark%
+\stepcounter{pandoccrossref@subfigures@footnote@counter}%
+\ifx\global@pandoccrossref@subfigures@footnotes\empty%
+\gdef\global@pandoccrossref@subfigures@footnotes{{##1}}%
+\else%
+\g@addto@macro\global@pandoccrossref@subfigures@footnotes{, {##1}}%
+\fi}}%
+{\end{figure}%
+\addtocounter{footnote}{-\value{pandoccrossref@subfigures@footnote@counter}}
+\@for\f:=\global@pandoccrossref@subfigures@footnotes\do{\stepcounter{footnote}\footnotetext{\f}}%
+\gdef\global@pandoccrossref@subfigures@footnotes{}}
+\@ifpackageloaded{float}{}{\usepackage{float}}
+\floatstyle{ruled}
+\@ifundefined{c@chapter}{\newfloat{codelisting}{h}{lop}}{\newfloat{codelisting}{h}{lop}[chapter]}
+\floatname{codelisting}{Listing}
+\newcommand*\listoflistings{\listof{codelisting}{List of Listings}}
+\makeatother
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+% fallback for those not using the hyperref driver hyperxmp:
+\makeatletter
+\@ifundefined{xmpquote}{\newcommand{\xmpquote}[1]{#1}}{}
+\makeatother
+\hypersetup{
+  pdftitle={Noise bends a polynomial fit},
+  pdfauthor={Ada Lovelace (Analytical Engine Institute)},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\title{Noise bends a polynomial fit}
+\author{Ada Lovelace (Analytical Engine Institute)}
+\date{}
+
+\begin{document}
+\maketitle
+\begin{abstract}
+We measure how noise bends a polynomial fit, and find that its error
+grows as the square of the noise.
+\end{abstract}
+
+\section{Introduction}\label{introduction}
+
+\subsection{State of the art}\label{introduction-state-of-the-art}
+
+Polynomial fits are
+standard\textsuperscript{\citeproc{ref-smith-2020-fits}{1}--\citeproc{ref-kim-2017-survey}{3}}.
+Noise is known to bias
+them\textsuperscript{\citeproc{ref-lee-2018-noise}{4}}. An earlier draft
+said so. A lost work claimed it first {[}to be resolved{]}, and a late
+one agreed\textsuperscript{\citeproc{ref-late-work}{5}}. A third said it
+again.
+
+\section{Results}\label{results}
+
+\subsection{How does noise change the fit?}\label{O1}
+
+\subsubsection{The error grows with the noise}\label{R1}
+
+The error of the fit follows
+
+\begin{equation}\protect\phantomsection\label{eq:error}{ e(\sigma) = 0.8\,\sigma^2 + 0.02 }\end{equation}
+
+and Eq.~\ref{eq:error} holds at every noise level we ran, as
+Fig.~\ref{fig:F1} shows. Table~\ref{tbl:T1} lists the errors. The fit
+follows Smith's
+method\textsuperscript{\citeproc{ref-smith-2020-fits}{1}}.
+
+\begin{longtable}[]{@{}ll@{}}
+\caption{The error of the fit at each noise
+level.}\label{tbl:T1}\tabularnewline
+\toprule\noalign{}
+noise & rmse \\
+\midrule\noalign{}
+\endfirsthead
+\toprule\noalign{}
+noise & rmse \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+0.1 & 0.03 \\
+0.2 & 0.05 \\
+0.4 & 0.15 \\
+\end{longtable}
+
+\begin{figure}
+\centering
+\pandocbounded{\includegraphics[keepaspectratio,alt={The error of the fit grows with the noise.}]{figures/F1.png}}
+\caption{The error of the fit grows with the noise.}\label{fig:F1}
+\end{figure}
+
+\section{Discussion}\label{discussion}
+
+\subsection{Limits}\label{discussion-limits}
+
+The noise model is Gaussian, as Lee
+assumed\textsuperscript{\citeproc{ref-lee-2018-noise}{4}}. A heavier
+tail would bend the fit further, and the next runs should try one.
+
+\section{Methods}\label{methods}
+
+\subsection{Fitting}\label{methods-fitting}
+
+We fit by least squares, as Jones
+did\textsuperscript{\citeproc{ref-jones-2019-least}{2}}.
+
+\section{Acknowledgments}\label{acknowledgments}
+
+{[}TO BE GIVEN: acknowledgments{]}
+
+\section{Funding}\label{funding}
+
+{[}TO BE GIVEN: funding{]}
+
+\section{Competing interests}\label{competing-interests}
+
+The authors declare none.
+
+\section{Data availability}\label{data-availability}
+
+The data are synthetic and the project's runs made them.
+
+\section{Code availability}\label{code-availability}
+
+{[}TO BE GIVEN: the code repository, which setup has not settled{]}
+
+\section{References}\label{references}
+
+\protect\phantomsection\label{refs}
+\begin{CSLReferences}{0}{0}
+\bibitem[\citeproctext]{ref-smith-2020-fits}
+\CSLLeftMargin{1. }%
+\CSLRightInline{Smith, A. \& Li, B. Polynomial fits in practice.
+\emph{Journal of Fits} \url{https://doi.org/10.5555/smith} (2020)
+doi:\href{https://doi.org/10.5555/smith}{10.5555/smith}.}
+
+\bibitem[\citeproctext]{ref-jones-2019-least}
+\CSLLeftMargin{2. }%
+\CSLRightInline{Jones, C. Least squares for curves. \emph{Numerical
+Notes} \url{https://doi.org/10.5555/jones} (2019)
+doi:\href{https://doi.org/10.5555/jones}{10.5555/jones}.}
+
+\bibitem[\citeproctext]{ref-kim-2017-survey}
+\CSLLeftMargin{3. }%
+\CSLRightInline{Kim, F. A survey of fitting. \emph{Fitting Reviews}
+\url{https://doi.org/10.5555/kim} (2017)
+doi:\href{https://doi.org/10.5555/kim}{10.5555/kim}.}
+
+\bibitem[\citeproctext]{ref-lee-2018-noise}
+\CSLLeftMargin{4. }%
+\CSLRightInline{Lee, D. \& Hall, E. Noise and bias in fits. \emph{arXiv}
+Preprint at \url{https://arxiv.org/abs/1801.00001} (2018).}
+
+\bibitem[\citeproctext]{ref-late-work}
+\CSLLeftMargin{5. }%
+\CSLRightInline{Late, A. A late agreement. \emph{Journal of Tests}
+\url{https://doi.org/10.5555/late} (2024)
+doi:\href{https://doi.org/10.5555/late}{10.5555/late}.}
+
+\end{CSLReferences}
+
+\end{document}

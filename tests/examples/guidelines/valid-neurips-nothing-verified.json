@@ -31,7 +31,9 @@
   "reference_style": {
     "style": "set by the style file; the call for papers names none",
     "max_count": null,
-    "citation": "unknown"
+    "citation": "unknown",
+    "csl": null,
+    "bibtex": true
   },
   "reporting_checklists": [
     {

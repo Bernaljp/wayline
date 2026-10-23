@@ -128,7 +128,8 @@ What the owner says or hands over, the rule you follow, and the verbs you run. T
 | asks about a reference | read | `wayline consult <slug> "<question>"` |
 | it is unclear what they mean, which section, which ticket, project or harness | ask | `wayline status` |
 | asks for a section to be compiled (a consolidation) | confirm | `wayline consolidate <section>` |
-| orders the paper, or "compile" said of the paper (the procedure is paper.md) | confirm | `wayline paper`, `wayline paper --yes` |
+| orders the paper, or "compile" said of the paper (the procedure is paper.md) | confirm | `wayline paper`, `wayline paper --yes`, `wayline paper --yes --for <venue>` |
+| asks for the paper compiled for another venue once it is composed (paper.md) | confirm | `wayline paper compile <venue>`, `wayline paper compile <venue> --yes` |
 | gives the paper's front matter, at setup or any time after | record | `wayline paper front -` |
 | after setup changes the stopping rule, raises a budget, or makes the code repository public | confirm | `wayline switch --stop-when <rule>`, `wayline switch --budget <name>=<hours>`, `wayline intake --from -` |
 | asks to promote a local skill, role, or policy into the harness | confirm | `wayline promote skill <name>` |

@@ -58,7 +58,9 @@
   "reference_style": {
     "style": "Numbered, one publication per reference number, each carrying the cited title.",
     "max_count": 70,
-    "citation": "numbered"
+    "citation": "numbered",
+    "csl": "nature.csl",
+    "bibtex": false
   },
   "reporting_checklists": [
     {

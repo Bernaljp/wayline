@@ -47,7 +47,9 @@
   "reference_style": {
     "style": "Numbered, superscript in the text; surname and initials, journal title italic and abbreviated, volume bold.",
     "max_count": 50,
-    "citation": "numbered"
+    "citation": "numbered",
+    "csl": "nature.csl",
+    "bibtex": false
   },
   "reporting_checklists": [
     {

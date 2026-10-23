@@ -45,6 +45,22 @@ changing the outline (`wayline outline show` prints it). An owner's edit of a pa
 unless what that part is made from changed. Each order makes a new version; the previous one is kept under
 `research/paper/earlier/v<n>/`.
 
+## The compilations
+
+Once the paper is composed, code compiles it with no model call: the order asks the scout once more about every
+unresolved work the paper cites, then writes `research/paper/compilations/plain/`: the LaTeX, the PDF, a `.docx`, and
+a Markdown copy. A work still unresolved is never cited; its claim is kept marked "to be resolved", or dropped, as the
+batch answered. When the owner names a venue with the order ("for Nature Methods"), confirm with
+`wayline paper --yes --for <venue> --project .`, the venue being a slug under the harness's `guidelines/`, and the order
+also writes `compilations/<venue>/`, typeset and checked under that venue's guidelines with its citation style. A
+paper over a venue's limit gets one fitting session (about $3) that cuts text or moves it to the supplement, adding no
+claim; the venue-free paper stays as it is. Each compilation's `compilation.json` says what was made, the checks on the
+compiled output, and what was cut.
+
+Compiling for another venue later is a compilation alone, behind its own card: run `wayline paper compile <venue>
+--project .` and relay the card; on the owner's yes run `wayline paper compile <venue> --yes --project .`. Nothing is
+submitted anywhere.
+
 ## The front matter
 
 The authors with their affiliations, the corresponding author, the acknowledgments, the funding, and the competing

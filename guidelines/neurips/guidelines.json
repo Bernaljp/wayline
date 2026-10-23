@@ -34,7 +34,9 @@
   "reference_style": {
     "style": "Set by the style file; neither page states one.",
     "max_count": null,
-    "citation": "unknown"
+    "citation": "unknown",
+    "csl": null,
+    "bibtex": true
   },
   "reporting_checklists": [
     {

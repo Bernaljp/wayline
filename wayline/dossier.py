@@ -1952,7 +1952,7 @@ def absorb_level_0(project, references=None, fetcher=None, email=None, ledger=No
     return report
 
 
-def look_up_one(project, reference, fetcher=None, email=None, ledger=None, clock=None, finish=True):
+def look_up_one(project, reference, fetcher=None, email=None, ledger=None, clock=None, finish=True, live=False):
     """One reference looked up for a ticket (decision 17): `{outcome, slug, dossier, change}`.
 
     What `wayline scout <identifier>` and the check at acceptance share. A reference a dossier
@@ -1967,6 +1967,8 @@ def look_up_one(project, reference, fetcher=None, email=None, ledger=None, clock
     and the answer is filed under it, against what the project holds by then: a work another worker filed
     meanwhile is joined rather than given a second slug. `finish` joins duplicates and rebuilds the query
     pack after a found work; a caller looking up several passes False and calls `finish_lookups` once.
+    `live` is the paper order's last retry (ticket 118): a flagged reference is asked whatever its flag says, once more,
+    and a flag that had given up stays given up when it fails again.
     """
     project = Path(project)
     ledger = ledger_for(ledger if ledger is not None else project)
@@ -1985,7 +1987,8 @@ def look_up_one(project, reference, fetcher=None, email=None, ledger=None, clock
 
     existing, taken, index = holdings()
     dossier, change = _look_up(ledger, Scout(fetcher, email, clock=clock), reference, existing, taken, clock, _give_up_days(project),
-                               {"disagreements": []}, index, file_no_such_work=False, filing=ledger.lock, refresh=holdings)
+                               {"disagreements": []}, index, file_no_such_work=False, filing=ledger.lock, refresh=holdings,
+                               live=live)
     if dossier is not None:
         with ledger.lock():
             if dossier["existence"] == VERIFIED and finish:
@@ -2076,7 +2079,8 @@ def retry_flagged(project, fetcher=None, email=None, ledger=None, clock=None, sk
     return report
 
 
-def _look_up(ledger, scout, reference, existing, taken, clock, days, report, index=None, file_no_such_work=True, filing=None, refresh=None):
+def _look_up(ledger, scout, reference, existing, taken, clock, days, report, index=None, file_no_such_work=True, filing=None, refresh=None,
+             live=False):
     """One reference looked up and filed, unless its flag says to wait or to give up. Returns `(dossier, change)`.
 
     A reference no dossier holds yet that resolves to a work `index` already files (by DOI, arXiv
@@ -2086,23 +2090,32 @@ def _look_up(ledger, scout, reference, existing, taken, clock, days, report, ind
     and the check at acceptance do (decision 17), where intake's references are filed whatever they come to.
     `filing` (the ledger's lock) is held while the answer is filed, after the services were asked without it,
     and `refresh()` then re-reads `(existing, taken, index)`, so what another process filed meanwhile counts.
+    `live` asks the services whatever the flag says (the paper order's last retry); a flag that had given up, or was due
+    to, is given up again when the work still is not found.
     """
     now = clock()
     state = retry_state(existing, now, days) if existing else None
-    if state == NOT_YET:
+    if state == NOT_YET and not live:
         return existing, WAITING
-    if state == GIVE_UP_NOW:
+    if state == GIVE_UP_NOW and not live:
         return give_up(ledger, existing, timestamp(now)), GAVE_UP
-    if state == GAVE_UP:
+    if state == GAVE_UP and not live:
         return existing, GAVE_UP
     found = bool(existing and existing["existence"] == VERIFIED and state is None)
     resolved = scout.resolve(reference, found=found)
+
+    def filed(existing, taken, index):
+        dossier, change = _file_answer(ledger, reference, existing, resolved, taken, now, report, index, file_no_such_work)
+        if live and state in (GAVE_UP, GIVE_UP_NOW) and dossier is not None and dossier.get("retry") and not dossier["retry"].get("gave_up"):
+            dossier = give_up(ledger, dossier, timestamp(now))
+        return dossier, change
+
     if filing is None:
-        return _file_answer(ledger, reference, existing, resolved, taken, now, report, index, file_no_such_work)
+        return filed(existing, taken, index)
     with filing():
         if refresh is not None:
             existing, taken, index = refresh()
-        return _file_answer(ledger, reference, existing, resolved, taken, now, report, index, file_no_such_work)
+        return filed(existing, taken, index)
 
 
 def _file_answer(ledger, reference, existing, resolved, taken, now, report, index, file_no_such_work):
