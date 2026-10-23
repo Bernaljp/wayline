@@ -29,4 +29,4 @@ Not part of this ticket:
 - [x] No figure is made from nothing unless the owner asked or the venue requires it; chosen tables render as numbered tables from their CSV.
 - [x] Code writes `figures/F<n>/` and `S<n>/` with `caption.md` under `research/paper/`, and `PAPER.md` records each figure's plan line.
 - [x] Tests: the plan built from a fixture ledger with marks of each kind and none; the venue limit; the composed-panels check passing and failing on sample generators; the fake launcher scripting the figure role's two sessions; CHANGELOG `## Unreleased` names figures from marks.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
