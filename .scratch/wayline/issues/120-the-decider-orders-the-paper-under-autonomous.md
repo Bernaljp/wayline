@@ -33,4 +33,4 @@ Not part of this ticket:
 - [x] One decider session on `opus max` reads `REPORT.md`, `OBJECTIVES.md`, and `OUTLINE.md` and returns order or not with its reason; an order runs `wayline paper` with the setup's venue.
 - [x] The decider answers the batch (an oversized figure split, never dropped), settles the outline's open proposals without moving an owner-placed line, and picks a title; each answer appears under "Decided for you".
 - [x] Tests: the fake launcher scripts the decider ordering and declining; journal replay covers each end kind and idempotence of a second wave; the account's lines are asserted on the rendered `ACCOUNT.md`.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
