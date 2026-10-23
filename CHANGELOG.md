@@ -36,6 +36,19 @@ lists it read-only, marked with its tag.
 - `research_version` in `harness.json` (ticket 72): absent is 1, `wayline init` writes `wayline.RESEARCH_VERSION`
   (2). A small upgrade, within one `research_version`, works as before, both ways.
 
+- Code at the order (ticket 119; Implementation Decision 17). Before the paper order's writer launches, code takes its
+  steps on `code/` (`wayline.paper_code`, called by the conductor's rest point once a wave): the scripts behind every
+  figure and every cited drawing number are copied into `code/figures/` (one per drawing, with `FIGURES.md`), an
+  environment file and a Dockerfile are rendered from the locks whatever `harness.json.environment` says (an owner's
+  file of that name is kept, wayline's beside it), and all of it is committed; `paper-N` is tagged on `main` and the
+  code repository's split is pushed with the tag through the tool runner, never forced. Every result whose code changed
+  since its run is re-run at the tag as detached jobs in `.worktrees/paper-N` (a run no job made is listed as not re-run);
+  the numbers check reads its findings against the re-run, and a ticket is cut only when a cited number moved. The
+  code-to-Methods check then runs over all of `code/` (`methods.check(changed=...)`), its problems going to the writer.
+  Each step is journaled as the new event `paper_code`; the record is `research/orders/<N>/code.json` (schema
+  `paper_code`), `paper.json` gains `code`, and `PAPER.md` a "Code at the order" section. The account's "Waiting on you"
+  now lists a code repository still private at a paper order (it read the retired `paper_started` event before).
+
 - The dashboard edits the sections and the outline (ticket 113; Implementation Decisions 17 and 8). Introduction,
   Results, Discussion, Methods, and the outline each get an edit button in the Paper view, opening a plain text editor on
   the rendered file. Its save is the new `wayline edit <section|outline>` verb (`wayline.edits`): the text is written back

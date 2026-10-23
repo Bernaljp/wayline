@@ -5,5 +5,5 @@
   "applicability_tags": {"kinds": [], "data_types": [], "libraries": [], "venues": []},
   "cost_hint": "large",
   "fixtures": ["skill/wayline", "skill/wayline-intake", "skill/wayline-grill", "skill/wayline-plan", "skill/wayline-evolve"],
-  "sha256": "e3a69b944eb7ab4370f10f6a23bfb06c1efae274caca62750e74bab82e564638"
+  "sha256": "fc7a180ece61fd95e63dfda6b06ac7edb09043a0188cdee278019643d41e39a8"
 }

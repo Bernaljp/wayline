@@ -871,19 +871,21 @@ def _matches(entry, item):
 
 
 def check(project_or_ledger, worktree, result, *, base="main", run=run_tool, tools=None, policy=None, harness_root=HARNESS_ROOT,
-          ticket=None, attempt=None):
+          ticket=None, attempt=None, changed=None):
     """The rule from code to Methods over one ticket's diff in `code/`: an `Outcome`, or None when the diff changed no code.
 
     `worktree` is where the ticket's branch is checked out and `base` the branch it is compared with; `result` is the
     worker's result, whose Methods passages, `parameters`, and `not_methods` the check reads. The parsers run through
-    `run`, the tool runner tests replace with recordings.
+    `run`, the tool runner tests replace with recordings. `changed` (`{path: lines, or None for the whole file}`) names
+    the files to check in place of the diff: the paper order checks every file of `code/` whole (ticket 119).
     """
     book = ledger_for(project_or_ledger)
     project = book.research.parent
     worktree = Path(worktree)
     tools = tools if tools is not None else Tools()
     result = result if isinstance(result, dict) else {}
-    changed = changed_lines(worktree, base)  # git itself, never the parsers' runner
+    if changed is None:
+        changed = changed_lines(worktree, base)  # git itself, never the parsers' runner
     if not changed:
         return None
     tables = {"aliases": aliases(), "defaults": defaults()}

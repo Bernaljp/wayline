@@ -121,6 +121,7 @@ REFERENCE_RAISED = "reference_raised"  # an important unresolved reference put t
 SCOUT_SEARCHED = "scout_searched"  # one `wayline scout search`, counted against its ticket and the day's OpenAlex requests (decision 17; ticket 99)
 PAPER_ORDER = "paper_order"  # a paper order made, its paper composed, or the order failing (decision 17; ticket 115)
 OUTLINE = "outline"  # one change the owner (or the decider, or code dropping a gone placement) made to research/outline.json (decision 17; ticket 104)
+PAPER_CODE = "paper_code"  # one of code's steps at a paper order: the tag, a stale result's re-run launched or concluded, and the end (decision 17; ticket 119)
 
 # --- payload keys ----------------------------------------------------------------------------
 
@@ -297,6 +298,9 @@ K_QUERY = "query"  # `scout_searched`: what was searched for, or null for the wo
 K_CITING = "citing"  # `scout_searched`: the seed whose citing works were listed, or null for a query
 K_WORKS = "works"  # `scout_searched`: how many works the search listed
 K_OPENALEX = "openalex"  # `scout_searched`: the OpenAlex requests it made, which the day's count adds up
+K_STEP = "step"  # `paper_code`: which of code's steps at the order, tagged, rerun_launched, rerun, or done
+K_SPLIT = "split"  # `paper_code`: the code repository's split commit the tag `paper-N` was pushed at
+K_PUSHED = "pushed"  # `paper_code`: whether the split and its tag reached the code repository's remote
 
 # --- the vocabulary: event -> payload keys, in the spec table's order ------------------------
 
@@ -375,6 +379,7 @@ EVENTS = {
     SCOUT_SEARCHED: (K_QUERY, K_CITING, K_WORKS, K_OPENALEX),
     PAPER_ORDER: (K_ORDER, K_ACTION, K_BY, K_RUN, K_BATCH, K_VERSION, K_COMMIT, K_PARTS, K_REASON, K_VENUE, K_BUILD, K_POINTS,
                   K_CHOICE),
+    PAPER_CODE: (K_ORDER, K_STEP, K_TAG, K_COMMIT, K_SPLIT, K_PUSHED, K_RESULT, K_JOBS, K_OUTCOME, K_TICKET, K_REASON),
 }
 
 # The values the spec table enumerates for a payload key; checked when the key is present.
@@ -455,6 +460,9 @@ PAYLOAD_ENUMS = {
     (PAPER_ORDER, K_ACTION): ("ordered", "composed", "gated", "passed", "not_passed", "chosen", "failed"),
     (PAPER_ORDER, K_CHOICE): ("more", "keep", "objectives"),
     (PAPER_ORDER, K_BY): ("owner", "decider"),
+    # Code's steps at an order (ticket 119): the tag, a stale result's re-run launched, its outcome, and the end.
+    (PAPER_CODE, K_STEP): ("tagged", "rerun_launched", "rerun", "done"),
+    (PAPER_CODE, K_OUTCOME): ("held", "moved", "failed", "not_rerun"),
 }
 
 

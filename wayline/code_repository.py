@@ -39,7 +39,7 @@ from wayline.tools import ToolsError, failure_line, run_recorded, run_tool
 __all__ = [
     "CODE", "CLONES", "SHAPES", "VISIBILITIES", "HOWS", "CodeRepositoryError", "record", "absorb_clone", "inherited_license",
     "split", "check_answer", "ANSWER_FIELDS", "settle", "push", "push_if_changed", "make_public", "main_commit",
-    "head_commit", "absorbed_clone", "CodePushRejected", "last_push",
+    "head_commit", "absorbed_clone", "CodePushRejected", "last_push", "push_tag",
 ]
 
 CODE = "code"
@@ -399,6 +399,24 @@ def push(project, commit, url, repository, branch=MAIN, main=None, run=run_tool)
                                    "descend from (%s); wayline never forces a push" % (repository, commit[:12], branch, said), commit)
         raise CodeRepositoryError("git push to %s failed: %s" % (repository, said))
     Ledger(project).append_event(CODE_PUSHED, {"commit": commit, "remote": repository, "main": main})
+    return commit
+
+
+def push_tag(project, commit, url, repository, tag, run=run_tool):
+    """Push the split `commit` as the tag `tag` (`paper-N`, ticket 119) to `url`, never forced; code alone calls this.
+
+    A remote that already holds the tag at another commit refuses it (`CodePushRejected`): wayline never moves a tag
+    the code repository published.
+    """
+    if run is run_tool and not _local(url):
+        real_backend("GitHub (the push of the paper's tag)")
+    done = _git(run, project, "push", url, "%s:refs/tags/%s" % (commit, tag), env={"GIT_TERMINAL_PROMPT": "0"}, ok=None)
+    if done.returncode != 0:
+        said = failure_line(done)
+        if _REJECTED.search((done.stderr or b"").decode("utf-8", errors="replace") + said) or "already exists" in said:
+            raise CodePushRejected("%s refused the tag %s at %s (%s); wayline never forces a push" % (repository, tag, commit[:12], said),
+                                   commit)
+        raise CodeRepositoryError("git push of the tag %s to %s failed: %s" % (tag, repository, said))
     return commit
 
 

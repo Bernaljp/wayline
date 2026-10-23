@@ -67,7 +67,7 @@ from pathlib import Path
 from wayline import batches, grill, pacing, replay, tickets
 from wayline.cli import parse_args
 from wayline.ledger import (
-    ABSORBED, DECISION, DECISION_OPENED, DEMOTED, FINDING, PACING, PAPER_STARTED, PASSAGE, PAUSED,
+    ABSORBED, DECISION, DECISION_OPENED, DEMOTED, FINDING, PACING, PAPER_ORDER, PAPER_STARTED, PASSAGE, PAUSED,
     PROMOTED, PROPOSAL_ADMITTED, PROPOSAL_PARKED, REPORT_RENDERED, REVIEWED, RUN_ENDED, RUN_STARTED, TICKET_ACCEPTED,
     TICKET_CANCELLED, TICKET_CREATED, TICKET_DONE, TICKET_FAILED, TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RERUN,
     TICKET_RESULT, VERDICT, WAVE, Ledger, LedgerError, now_ts,
@@ -376,10 +376,16 @@ def _private_repository(context):
         record = code_repository.record(context.project)
     except (ProjectError, OSError, ValueError):
         return []
-    ordered = any(event.get("event") == PAPER_STARTED for event in context.events)
-    if not ordered or not record.get("remote") or record.get("visibility") != "private":
+    # The order: a paper order made (ticket 115), or the v1.0 paper's start, which a project of that version journaled.
+    ordered = [event for event in context.events if event.get("event") == PAPER_STARTED
+               or (event.get("event") == PAPER_ORDER and (event.get("payload") or {}).get("action") == "ordered")]
+    remote = record.get("remote")
+    if not ordered or not remote or record.get("visibility") != "private":
         return []
-    return ["- The code repository `%s` is still private, and the paper order names it; making it public is your word alone." % record["remote"]]
+    name = remote.get("repository") if isinstance(remote, dict) else remote
+    tag = "paper-%s" % (ordered[-1].get("payload") or {}).get("order") if ordered[-1].get("event") == PAPER_ORDER else None
+    return ["- The code repository `%s` is still private at the paper order%s, and the paper's code availability statement "
+            "names it; making it public is your word alone." % (name, " (its tag `%s`)" % tag if tag else "")]
 
 
 # --- changed without asking you ---------------------------------------------------------------------------

@@ -3330,10 +3330,12 @@ class Conductor:
 
     def _take_order(self, result, order):
         """The order's rest point, step by step: the running tickets finish, the changed results are drawn, the batch is
-        settled, and then the paper is composed from this commit (`paper.compose`). A run the order started for itself ends
-        as the last run had (`run` on the order); one that was going resumes at the next wave. A composition that fails
-        closes the order as failed, said; a usage window pauses the run, and the order is taken after it."""
-        from wayline import paper
+        settled, code takes its steps (`paper_code.step`: the tag `paper-N` and its push, the stale re-runs, `code/figures/`,
+        the environment, the code-to-Methods check; ticket 119), and then the paper is composed from this commit
+        (`paper.compose`). A run the order started for itself ends as the last run had (`run` on the order); one that was
+        going resumes at the next wave. A composition that fails closes the order as failed, said; a usage window pauses the
+        run, and the order is taken after it."""
+        from wayline import paper, paper_code
         drawn = self._order_ids()
         running = sorted({identifier for identifier in self.flight if identifier not in drawn}
                          | {entry["id"] for entry in self._graph()["tickets"] if entry["status"] == "running" and entry["id"] not in drawn})
@@ -3357,6 +3359,13 @@ class Conductor:
             return  # the writer and the gates are model work: they wait on the pause, the stop, or pacing
         from wayline import builds
         try:
+            # Code's steps before the writer (ticket 119): the tag and its push, the stale results re-run at it (jobs polled
+            # once a wave, so this waits across waves), the scripts behind the figures, the environment, the Methods check.
+            if not paper_code.step(self.project, order, run=self.code_run, methods_run=self.methods_run,
+                                   methods_tools=self.methods_tools, policy=self.policy, harness_root=self.harness_root, say=self.say):
+                self._say_order(order, "waits for its re-runs at %s to end" % (paper_code.TAG % order["order"]))
+                self._tail()
+                return
             # One build per wave (ticket 117): its composition when owed, then its three gates; the order stays open
             # until a build passes or the last one it allows fails.
             built = builds.take(self.project, order, harness_root=self.harness_root, policy=self.policy, say=self.say,
@@ -3367,7 +3376,7 @@ class Conductor:
         except gates.FableHeld:
             self._say_order(order, "waits for its gates on Fable's weekly window")
             return
-        except (paper.PaperError, gates.GateError, worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
+        except (paper.PaperError, paper_code.PaperCodeError, gates.GateError, worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
             self.say("  paper order %s failed: %s" % (order.get("order"), failure))
             paper.fail(self.project, order, str(failure))
             builds.closing_note(self.project, "Paper order %s failed: %s. No further build was made or gated." % (
