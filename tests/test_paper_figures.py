@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
-from tests.test_paper import PaperCase, Writer
+from tests.test_paper import PaperCase, Writer, asked
 from wayline import batches, figure_checks, figure_role, paper, paper_figures, worker
 from wayline.worker import Envelope
 
@@ -124,6 +124,20 @@ class PlanTest(FiguresCase):
         plan = paper_figures.build(self.project)
         self.assertEqual([(item["id"], item["plot"]) for item in plan["tables"]], [("T1", "R1.T1"), ("ST1", "R1.T2")])
 
+    def test_a_table_whose_csv_is_gone_is_left_out_before_the_tables_are_numbered(self):
+        self.drawn("R1", [(1, "keep")], tables=[(1, "keep"), (2, "keep")])
+        (self.project / "drawings" / "R1-1" / "t1.csv").unlink()
+        plan = paper_figures.build(self.project)
+        self.assertEqual([(item["id"], item["plot"]) for item in plan["tables"]], [("T1", "R1.T2")])
+        self.assertIn("R1.T1", " ".join(item["what"] for item in plan["left_out"]))
+
+    def test_a_supplementary_figure_too_large_for_a_page_is_split_too(self):
+        self.drawn("R1", [(1, "keep")] + [(number, None) for number in range(2, 14)])
+        plan = paper_figures.build(self.project)
+        self.assertEqual([(item["id"], len(item["panels"])) for item in plan["supplementary"]], [("S1", 6), ("S2", 6)])
+        self.assertEqual([paper_figures.figure_id(item) for item in plan["supplementary"]],
+                         ["paper-r1-supplement", "paper-r1-supplement-2"])
+
 
 # A sample generator of a composed figure: the standard library alone. It writes the figure's SVG with one group per
 # panel it draws, each marked `plot:<id>` the way the finishing session is told to, in one of the ways a writer can.
@@ -169,6 +183,14 @@ class ComposedPanelsTest(FiguresCase):
         svg = self.temp / "figure.svg"
         svg.write_text('<svg xmlns="http://www.w3.org/2000/svg"><g id="plot:R1.1"/></svg>', encoding="utf-8")
         self.assertFalse(figure_checks.check_planned_panels(svg, ["R1.1"])["pass"])
+
+    def test_markers_on_the_root_or_on_a_group_holding_other_panels_count_for_nothing(self):
+        svg = self.temp / "figure.svg"
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" id="plot:R1.1"><title>plot:R1.2</title>'
+                       '<g aria-label="plot:R1.3"><g id="plot:R1.4"><rect width="9" height="9"/></g></g></svg>', encoding="utf-8")
+        outcome = figure_checks.check_planned_panels(svg, ["R1.1", "R1.2", "R1.3", "R1.4"])
+        self.assertFalse(outcome["pass"])
+        self.assertIn("R1.1, R1.2, R1.3 are not", outcome["detail"], "R1.4 alone draws something of its own")
 
     def test_a_figure_with_no_svg_fails(self):
         outcome = figure_checks.check_planned_panels(self.temp / "missing.svg", ["R1.1"])
@@ -369,6 +391,25 @@ class BatchTest(FiguresCase):
         [made] = [item for item in asked["figures"] if item["result"] == "R2"]
         self.assertTrue(made["from_nothing"])
 
+    def test_a_figure_moved_to_the_supplement_is_no_result_without_a_figure(self):
+        plan = paper_figures.build(self.project, [{"ref": "figure:R3", "mark": "to the supplement", "by": "owner"},
+                                                  {"ref": "nothing:R3", "mark": "a figure from nothing", "by": "owner"}])
+        self.assertNotIn("R3", plan["without"])
+        self.assertNotIn("R3", [item["result"] for item in plan["figures"]], "moved, so no figure from nothing either")
+        self.assertEqual([item["why"] for item in plan["left_out"] if "R3" in item["what"]],
+                         ["moved to its supplementary figure at the order (owner)"])
+
+    def test_a_planned_panel_whose_drawing_cannot_be_read_fails_the_figure_and_never_turns_it_unguided(self):
+        (self.project / "research" / "drawings" / "R3-1.json").unlink()
+        plan = paper_figures.build(self.project)
+        with self.assertRaises(paper_figures.FigurePlanError) as raised:
+            paper_figures.request_for(self.project, plan, self.figure(plan, "F3"))
+        self.assertIn("R3.1", str(raised.exception))
+        asked = self.requests()
+        self.assertNotIn("paper-r3-main", [request["figure_id"] for request in asked])
+        self.assertIn("[FIGURE NOT MADE: blocked: ", self.read("figures/F3/caption.md"))
+        self.assertIn("R3.1", self.read("figures/F3/caption.md"))
+
 
 class ComposeFiguresTest(PlannedFigureCase):
     """`paper.compose` with a figure plan: the writer's session, then the figure role's two sessions per figure."""
@@ -435,6 +476,15 @@ class ComposeFiguresTest(PlannedFigureCase):
         self.assertIn("[FIGURE NOT MADE: honesty_failed", caption)
         self.assertFalse((self.project / "research" / "paper" / "figures" / "F1" / "F1.pdf").exists())
         self.assertIn("not made (honesty_failed", self.read("PAPER.md"))
+
+    def test_a_figure_mark_changes_no_part_but_the_results_and_the_supplement(self):
+        self.compose_with_figures()
+        made = paper.order(self.project, start=None)
+        number = {item["ref"]: item["id"] for item in batches.read_batch(self.project, made["batch"])["items"]}
+        batches.mark(self.project, made["batch"], number["figure:R1"], "to the supplement")
+        record = self.compose_with_figures(figures=1)
+        self.assertEqual(asked(self.writer.prompts[0]), ["title", "abstract", "results", "supplement"])
+        self.assertEqual(sorted(entry["id"] for entry in record["figures"]["figures"]), ["S1"])
 
     def test_a_re_order_reuses_a_verified_figure_whose_plan_is_unchanged(self):
         self.compose_with_figures()

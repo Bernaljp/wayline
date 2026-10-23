@@ -659,8 +659,9 @@ def part_inputs(project, structure, followed, plan=None):
     the records code writes it from."""
     book = ledger_for(project)
     bodies = {section: _section_body(book, section) for section in MAIN_TEXT}
-    told = sorted((item["ref"], item["mark"], item.get("note")) for item in followed)
     from wayline import paper_figures
+    # The figure plan's answers reach the results and the supplement through the plan's lines, and no other part.
+    told = sorted((item["ref"], item["mark"], item.get("note")) for item in followed if not paper_figures.is_figure_ref(item["ref"]))
     figures = paper_figures.plan_lines(plan) if plan is not None else None
     objectives = _read_or(book, "objectives.json")
     found = {

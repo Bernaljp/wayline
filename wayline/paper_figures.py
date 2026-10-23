@@ -41,7 +41,7 @@ from wayline import HARNESS_ROOT
 from wayline.ledger import PAPER_STARTED, ledger_for
 
 __all__ = [
-    "PANELS_PER_PAGE", "AS_PLANNED", "TO_SUPPLEMENT", "SPLIT", "DROP", "NO_FIGURE", "FROM_NOTHING", "is_figure_ref",
+    "FigurePlanError", "PANELS_PER_PAGE", "AS_PLANNED", "TO_SUPPLEMENT", "SPLIT", "DROP", "NO_FIGURE", "FROM_NOTHING", "is_figure_ref",
     "build", "batch_items", "plan_lines", "request_for", "figure_id", "make_figures", "write", "label", "writer_lines",
     "report_lines", "display_limit",
 ]
@@ -179,9 +179,15 @@ def build(project, answers=(), *, autonomous=False, venue=None, limit=None, pane
     if limit is None:
         venue, limit = display_limit(venue)
     rows = _base(book)
-    left_out, oversized, without = [], [], []
+    left_out, oversized, without, sources = [], [], [], {}
     for row in rows:
         left_out += [{"what": "%s, a plot of %s" % (identifier, row["result"]), "why": "the owner marked it drop"} for identifier in row["dropped"]]
+        for key in ("tables", "rest_tables"):
+            for plot in list(row[key]):
+                sources[plot] = _table_source(book, plot)
+                if not sources[plot]["csv"] or not (book.project / sources[plot]["csv"]).is_file():
+                    row[key].remove(plot)
+                    left_out.append({"what": "%s, a table of %s" % (plot, row["result"]), "why": "its CSV is not on disk"})
         row["figures"], row["from_nothing"] = [], False
         if not row["main"]:
             continue
@@ -190,6 +196,7 @@ def build(project, answers=(), *, autonomous=False, venue=None, limit=None, pane
             left_out.append({"what": "Figure of %s" % row["result"], "why": "moved to its supplementary figure at the order (%s)"
                              % (given[FIGURE + row["result"]].get("by") or "owner")})
             row["rest"], row["panels"] = row["panels"] + row["rest"], []
+            continue
         if not row["panels"]:
             asked = (given.get(NOTHING + row["result"]) or {}).get("mark") or NO_FIGURE
             if asked == FROM_NOTHING:
@@ -238,10 +245,11 @@ def build(project, answers=(), *, autonomous=False, venue=None, limit=None, pane
         tables += [{"id": "T%d" % (len([t for t in tables if t["main"]]) + 1), "result": row["result"], "plot": plot, "main": True}
                    for plot in row["tables"]]
     for row in rows:
-        if row["rest"]:
+        pages = _split(row["rest"], panels_per_page) if row["rest"] else []
+        for part, panels in enumerate(pages, start=1):  # a supplementary figure too keeps to a page
             supplementary.append({"id": "S%d" % (len(supplementary) + 1), "result": row["result"], "heading": row["heading"],
-                                  "main": False, "panels": list(row["rest"]), "how": "its other plots", "part": 1, "parts": 1,
-                                  "from_nothing": False})
+                                  "main": False, "panels": list(panels), "how": "its other plots", "part": part,
+                                  "parts": len(pages), "from_nothing": False})
         tables += [{"id": "ST%d" % (len([t for t in tables if not t["main"]]) + 1), "result": row["result"], "plot": plot, "main": False}
                    for plot in row["rest_tables"]]
     marks = {}
@@ -250,7 +258,7 @@ def build(project, answers=(), *, autonomous=False, venue=None, limit=None, pane
     for figure in figures + supplementary:
         figure["line"] = _line(figure, marks)
     for table in tables:
-        table.update(_table_source(book, table["plot"]))
+        table.update(sources[table["plot"]])
     return {"venue": venue, "limit": limit, "figures": figures, "supplementary": supplementary, "tables": tables,
             "left_out": left_out, "moved": moved, "without": without, "oversized": oversized, "per_page": panels_per_page}
 
@@ -335,10 +343,14 @@ def figure_id(figure):
     return name if figure["part"] == 1 else "%s-%d" % (name, figure["part"])
 
 
-def _panel(book, plot_id):
+class FigurePlanError(ValueError):
+    """A planned figure the figure role cannot start from: a planned panel whose drawing cannot be read."""
+
+
+def _panel(book, plot_id, plots):
     """What the figure role starts a panel from: the drawing that last drew the plot, its files, and its library."""
     from wayline import drawings
-    plot = next((item for item in drawings.read_plots(book)["plots"] if item.get("id") == plot_id), None) or {}
+    plot = next((item for item in plots if item.get("id") == plot_id), None) or {}
     for name in reversed(plot.get("drawings") or []):
         try:
             record = book.read_json(drawings.record_path(name))
@@ -367,12 +379,19 @@ def _data(book, paths):
     return found
 
 
-def request_for(project, plan, figure):
+def request_for(project, plan, figure, plots=None):
     """The `figure_request/1` of one planned figure: the planned mode on its panels, or for a figure from nothing the
-    unguided mode on its result's own evidence."""
+    unguided mode on its result's own evidence. Raises `FigurePlanError` when a planned panel's drawing cannot be read:
+    the figure is then not made, rather than made without it. `plots` is `drawings.read_plots`'s list, read once."""
     from wayline import drawings, figure_checks, results as results_module
     book = ledger_for(project)
-    panels = [found for found in (_panel(book, plot) for plot in figure["panels"]) if found is not None]
+    plots = drawings.read_plots(book)["plots"] if plots is None else plots
+    found = {plot: _panel(book, plot, plots) for plot in figure["panels"]}
+    unread = [plot for plot, panel in found.items() if panel is None]
+    if unread:
+        raise FigurePlanError("planned panel(s) %s of %s: no accepted drawing that drew them can be read, so the figure "
+                              "is not made without them" % (", ".join(unread), figure["id"]))
+    panels = list(found.values())
     libraries = [panel["library"] for panel in panels]
     library = max(libraries, key=libraries.count) if libraries else "matplotlib"
     style = book.project / figure_checks.DEFAULT_STYLE
@@ -389,7 +408,7 @@ def request_for(project, plan, figure):
         "target": {"venue": plan.get("venue"), "width_mm": WIDTH_MM, "max_height_mm": PAGE_MM, "min_font_pt": min_font,
                    "min_dpi": MIN_DPI, "max_words": None, "formats": ["pdf", "png"], "library": library},
     }
-    if figure["from_nothing"] or not panels:
+    if figure["from_nothing"]:
         found = {result.id: result for result in results_module.read_results(book)}.get(figure["result"])
         cited = [path for finding in (found.current if found else []) for path in drawings.cited(finding)]
         paths = [str(item).split("#", 1)[0] for item in cited]
@@ -421,9 +440,16 @@ def make_figures(project, plan, previous=None, *, harness_root=None, policy=None
     from wayline import figure_role
     say = say or (lambda text: None)
     before = {entry["figure_id"]: entry for entry in ((previous or {}).get("figures") or {}).get("figures") or []}
+    from wayline import drawings
+    plots = drawings.read_plots(project)["plots"]
     made = {}
     for figure in plan["figures"] + plan["supplementary"]:
-        request = request_for(project, plan, figure)
+        try:
+            request = request_for(project, plan, figure, plots)
+        except FigurePlanError as failure:
+            made[figure["id"]] = {"figure_id": figure_id(figure), "key": None, "result": None, "reason": str(failure), "reused": False}
+            say("  paper figure %s: not made: %s" % (figure["id"], failure))
+            continue
         identifier, key = request["figure_id"], _key(project, request)
         held = figure_role.read_result(project, identifier)
         same = (before.get(identifier) or {}).get("key") == key and isinstance(held, dict)
@@ -512,6 +538,8 @@ def _table_markdown(table, text):
 
 def writer_lines(plan):
     """The writer's view of the plan: each figure and table by the number the text refers to it by, and what it shows."""
+    if not plan:
+        return "- none: no figure plan was made"
     lines = []
     for figure in plan["figures"] + plan["supplementary"]:
         lines.append("- %s, of %s (\"%s\"): %s" % (label(figure["id"]), figure["result"], _one_line(figure.get("heading")),

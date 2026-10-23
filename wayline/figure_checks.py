@@ -1524,18 +1524,37 @@ def _local_tag(element):
 
 
 def marked_panels(svg_path):
-    """The plot ids a composed figure's SVG marks as its panels: `{plot id}` of each element that draws something and
-    carries `plot:<id>` as its `id`, its `aria-label`, or its `<title>` or `<desc>`. Raises OSError or ParseError."""
+    """The plot ids a composed figure's SVG marks as its panels: `{plot id}` of each element below the root that carries
+    `plot:<id>` as its `id`, its `aria-label`, or its own `<title>` or `<desc>`, and draws something of its own: a shape
+    or text under it that no other marked element below it holds. A marker on the root, or on a group whose every mark
+    belongs to panels marked inside it, marks nothing. Raises OSError or ParseError."""
     import xml.etree.ElementTree as ElementTree
     root = ElementTree.parse(str(svg_path)).getroot()
-    found = set()
+    marks = {}
     for element in root.iter():
+        if element is root:
+            continue
         names = [element.get("id"), element.get("aria-label")]
         names += [(child.text or "").strip() for child in element if _local_tag(child) in ("title", "desc")]
-        drawn = any(_local_tag(item) in _DRAWN for item in element.iter() if item is not element) or _local_tag(element) in _DRAWN
-        for name in names:
-            if name and name.strip().startswith("plot:") and drawn:
-                found.add(name.strip()[len("plot:"):])
+        plots = {name.strip()[len("plot:"):] for name in names if name and name.strip().startswith("plot:")}
+        if plots:
+            marks[element] = plots
+
+    def draws_its_own(element):
+        stack = [element]
+        while stack:
+            current = stack.pop()
+            if current is not element and current in marks:
+                continue  # another panel's
+            if _local_tag(current) in _DRAWN:
+                return True
+            stack.extend(list(current))
+        return False
+
+    found = set()
+    for element, plots in marks.items():
+        if draws_its_own(element):
+            found |= plots
     return found
 
 
