@@ -36,4 +36,4 @@ Not part of this ticket:
 - [x] The supplement carries a table of every inherited result's verdict, route, narrowed wording, and reasons, rendered by code, and Methods carries one writer paragraph naming the routes used.
 - [x] Concerns marked for the order reach the figure finish's, the writer's, and the compilation's inputs; a project with critiques gets one `response/<critique>.md` per critique with each point verbatim and its answer, and nothing sends it.
 - [x] Tests: the fake launcher scripts a build passing, one failing then passing, and three failing; journal replay covers the not-passed state under `autonomous`; the inherited table and the responses are asserted on the files a fixture ledger renders.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
