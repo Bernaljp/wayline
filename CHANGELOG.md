@@ -47,6 +47,31 @@ lists it read-only, marked with its tag.
   whitelist gains `edit` and `reason`, token-guarded like the rest; the editor opens from `GET
   /api/projects/<id>/edit/<target>`.
 
+- Compilations (ticket 118; Implementation Decisions 17, 13, 1, and 2). The venue-free paper becomes files the owner
+  can submit, made by code alone through pandoc (`wayline.compilations`), every tool called through the tool runner.
+  - Every paper order compiles `research/paper/compilations/plain/`, and `compilations/<venue>/` for the venue
+    `wayline paper --yes --for <venue>` names (`venue` on `paper_order`): LaTeX with the venue's class where one is
+    vendored beside its guidelines and a plain article otherwise, the PDF through `latexmk` with xelatex, a `.docx`
+    with Word's own equations, and a Markdown copy, each with `compilation.json` (schema `compilation`).
+  - Citations go through citeproc with the venue's CSL style, vendored under `guidelines/<venue>/` from the Citation
+    Style Language styles and named in `reference_style.csl`; a BibTeX venue (`reference_style.bibtex`: PNAS, ICLR,
+    ICML, NeurIPS) gets `references.bib` and LaTeX citing through natbib. pandoc-crossref resolves equation, figure,
+    and table references. A Lua filter (`templates/compile/tags.lua`) turns `ref` tags into citations and strips
+    `res`, `code`, `doc`, and `plot` tags; code checks every output for tag text after.
+  - Before compiling, the order asks the scout live once more about every unresolved work the paper cites
+    (`dossier.look_up_one(live=True)`, whatever the retry flag says); one still unresolved is never cited, its claim
+    dropped or kept marked "to be resolved" as the order's batch answered.
+  - The venue's checks run on the compiled LaTeX and the page count `pdfinfo` reads off the PDF. Over `max_count`,
+    code drops citations first from Introduction sentences citing several works, never a work the Results or the
+    Methods cite. A paper over a limit gets one fresh fitting writer session (`paper_fitting`, about $3) that cuts or
+    moves text to the supplement; a Type-A check refuses a fitted paper missing a claim tag, carrying a new one, or
+    with a changed number. The fitted parts stay under the compilation's `fitted/`.
+  - `wayline paper compile <venue>` compiles the current version for another venue later, a compilation alone: its
+    card without `--yes`, with no model call. The `wayline` skill routes both forms; `paper.md` says what the order
+    compiles.
+  - The guidelines' checks read a LaTeX draft's figures and tables from its body only, and a venue asking for Authors
+    is satisfied by `\author{}`.
+
 - The paper order and the paper's parts (ticket 115; Implementation Decisions 17, 13, 1, and 2). The paper is made only
   on an explicit order, from the outline and the sections; until one, the project holds only its sections and reports.
   - `wayline paper` now prints the order's card and does nothing else: the readiness list (open objectives, the

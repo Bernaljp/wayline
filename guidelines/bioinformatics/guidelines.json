@@ -32,7 +32,9 @@
   "reference_style": {
     "style": "Not stated on the pages fetched; only dataset citations are specified, following the DataCite recommendations.",
     "max_count": null,
-    "citation": "unknown"
+    "citation": "unknown",
+    "csl": "oxford-journals-scimed-author-date.csl",
+    "bibtex": false
   },
   "reporting_checklists": [],
   "submission_steps": [

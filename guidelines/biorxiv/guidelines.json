@@ -36,7 +36,9 @@
   "reference_style": {
     "style": "Not addressed on the submission page.",
     "max_count": null,
-    "citation": "any"
+    "citation": "any",
+    "csl": null,
+    "bibtex": false
   },
   "reporting_checklists": [],
   "submission_steps": [

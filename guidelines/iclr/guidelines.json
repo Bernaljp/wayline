@@ -35,7 +35,9 @@
   "reference_style": {
     "style": "Not stated on the page; the style file sets it. Self-citations are written in the third person.",
     "max_count": null,
-    "citation": "unknown"
+    "citation": "unknown",
+    "csl": null,
+    "bibtex": true
   },
   "reporting_checklists": [],
   "submission_steps": [

@@ -1,0 +1,22 @@
+[
+ "~/.wayline/tools/envs/pandoc/bin/pandoc",
+ "{build}/paper.md",
+ "--from",
+ "markdown",
+ "--lua-filter",
+ "~/Documents/SpecDrivenResearch/.claude/worktrees/agent-ac44ca809e5d387f9/templates/compile/tags.lua",
+ "--filter",
+ "~/.wayline/tools/envs/pandoc/bin/pandoc-crossref",
+ "--metadata-file",
+ "{build}/metadata.yaml",
+ "--resource-path",
+ "{build}",
+ "--to",
+ "latex",
+ "--standalone",
+ "--citeproc",
+ "--bibliography",
+ "{build}/references.json",
+ "-o",
+ "{build}/latex/paper.tex"
+]

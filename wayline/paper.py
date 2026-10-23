@@ -489,15 +489,21 @@ def _start_conductor(project):
 _STARTS = object()  # `order`'s default: start the conductor as the transient unit, as `wayline run --detach` does
 
 
-def order(project, by=OWNER, start=_STARTS):
+def order(project, by=OWNER, start=_STARTS, venue=None, harness_root=HARNESS_ROOT):
     """The paper order: journal it, ask its batch under `interactive` and `checkpoints`, and start a conductor when none
-    runs, which takes the order at its next wave. Returns `{order, batch, run, conductor, started}`.
+    runs, which takes the order at its next wave. Returns `{order, batch, run, conductor, started, venue}`.
 
     Refused while an order is open. `run` is how the last run ended when no run was going (a project never run counts as
     stopped), so the order's own run ends the same way; None while a run was going, which resumes after the paper.
+    `venue`, a slug of `guidelines/`, is compiled for beside `compilations/plain/` once the paper is composed (ticket 118).
     """
-    from wayline import replay
+    from wayline import guidelines, replay
     project = Path(project).resolve()
+    if venue is not None:
+        try:
+            guidelines.read_guidelines(harness_root, venue)
+        except (guidelines.GuidelinesError, ValidationError) as failure:
+            raise PaperError("no venue %s to compile for: %s" % (venue, failure)) from None
     book = ledger_for(project)
     with book.lock():
         events = _events(book)
@@ -514,14 +520,15 @@ def order(project, by=OWNER, start=_STARTS):
             items = batch_items(project)
             if items:
                 batch = batches.open_batch(project, BATCH_KIND, "Paper order %d: before the writer" % number, items)["id"]
-        book.append_event(PAPER_ORDER, {"order": number, "action": ORDERED, "by": by, "run": run, "batch": batch})
+        book.append_event(PAPER_ORDER, dict({"order": number, "action": ORDERED, "by": by, "run": run, "batch": batch},
+                                            **({"venue": venue} if venue else {})))
     started = None
     if holder is None and start is not None:
         try:
             started = (_start_conductor if start is _STARTS else start)(project) or ""
         except (OSError, ValueError, RuntimeError) as failure:  # a unit the manager refused: the tick relaunches it
             started = "not started (%s); the tick starts one, or wayline run --detach" % _one_line(failure)
-    return {"order": number, "batch": batch, "run": run, "conductor": holder is not None, "started": started}
+    return {"order": number, "batch": batch, "run": run, "conductor": holder is not None, "started": started, "venue": venue}
 
 
 def fail(project, payload, reason):
@@ -1148,17 +1155,23 @@ def _report(record, recompose, answer, payload, checks):
 
 
 def paper_command(args):
-    """`wayline paper [--yes] [--json] [--project <path>]`, and `wayline paper front - [--project <path>]`.
+    """`wayline paper [--yes] [--for <slug>] [--json] [--project <path>]`, `wayline paper front - [--project <path>]`, and
+    `wayline paper compile <slug> [--yes] [--json] [--project <path>]`.
 
-    Alone it prints the order's card and does nothing else; with `--yes`, the owner's confirmation, it makes the order.
-    `paper front -` records the front matter the owner gave, a JSON object on stdin.
+    Alone it prints the order's card and does nothing else; with `--yes`, the owner's confirmation, it makes the order,
+    which compiles the paper plainly and for the venue `--for` names. `paper front -` records the front matter the owner
+    gave, a JSON object on stdin; `paper compile` compiles the current version for another venue (ticket 118).
     """
     if args and args[0] == "front":
         return _front_command(args[1:])
+    if args and args[0] == "compile":
+        from wayline import compilations
+        return compilations.compile_command(args[1:])
     parser = argparse.ArgumentParser(prog="wayline paper", description="the paper order: without --yes, its card (the readiness list "
                                      "and the cost, with no model call); with --yes, the order, which composes the paper from the "
-                                     "outline and the sections")
+                                     "outline and the sections and compiles it")
     parser.add_argument("--yes", action="store_true", help="the owner's confirmation; without it nothing is done")
+    parser.add_argument("--for", dest="venue", metavar="SLUG", help="a venue of guidelines/ the order compiles for, beside the plain compilation")
     parser.add_argument("--project", help="the project; the active one by default")
     parser.add_argument("--json", action="store_true", help="print the card or the order as JSON")
     options, code = parse_args(parser, args)
@@ -1170,7 +1183,7 @@ def paper_command(args):
             found = card(project)
             print(json.dumps(found, indent=2, default=str) if options.json else card_text(found))
             return 0
-        made = order(project)
+        made = order(project, venue=options.venue)
     except PaperError as failure:
         print("wayline paper: %s" % failure, file=sys.stderr)
         return 2
@@ -1180,7 +1193,7 @@ def paper_command(args):
     if options.json:
         print(json.dumps(made, indent=2))
         return 0
-    print("paper order %d made." % made["order"])
+    print("paper order %d made%s." % (made["order"], ", compiled plainly and for %s once composed" % made["venue"] if made["venue"] else ""))
     if made["batch"]:
         print(batches.render(project, made["batch"]))
         print("The writer waits for these answers: wayline mark %s --defaults takes all defaults." % made["batch"])

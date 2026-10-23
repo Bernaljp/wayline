@@ -55,7 +55,7 @@ from wayline.provenance import identifier_index, manifest_paths, parse_tag, read
 
 __all__ = [
     "GuidelinesError", "GUIDELINES_DIR", "GUIDELINES_JSON", "SOURCE_MD", "CHECKLIST_DIR",
-    "NOTE", "NOTE_DATE", "VENUES", "VERIFIED_FIELDS", "STUDY_TYPES", "CHECKS",
+    "NOTE", "NOTE_DATE", "VENUES", "VERIFIED_FIELDS", "STUDY_TYPES", "CHECKS", "CITATION_STYLES",
     "venue_seed", "build", "build_venue", "read_guidelines", "render_source",
     "Manuscript", "Finding", "run_checks", "worst", "check_length", "check_structure", "heading_matches", "check_figures",
     "check_references", "check_reporting_checklists", "check_template", "check_provenance",
@@ -93,6 +93,18 @@ STUDY_TYPES = {
     "life-sciences": ("cell line", "antibod", "sequencing", "rna-seq", "western blot", "flow cytometry"),
     "behavioural": ("participants were recruited", "informed consent", "questionnaire"),
     "custom-code": ("custom code", "code availability", "source code is available"),
+}
+
+# What a compilation cites through (ticket 118), the harness's choice rather than the note's: the CSL style vendored
+# beside each venue's guidelines from the Citation Style Language styles (the independent style a venue's own dependent
+# style points at, since pandoc reads no dependent one), None where the venue has no house style and pandoc's default
+# serves; and whether the venue's LaTeX template takes a BibTeX `.bib` (a natbib conference style, PNAS's `pnas-new.bst`).
+CITATION_STYLES = {
+    "nature": ("nature.csl", False), "nature-communications": ("nature.csl", False), "nature-methods": ("nature.csl", False),
+    "cell": ("cell.csl", False), "cell-systems": ("cell.csl", False), "elife": ("elife.csl", False),
+    "genome-biology": ("springer-vancouver-brackets.csl", False), "plos-compbiol": ("plos.csl", False),
+    "pnas": ("pnas.csl", True), "bioinformatics": ("oxford-journals-scimed-author-date.csl", False),
+    "arxiv": (None, False), "biorxiv": (None, False), "iclr": (None, True), "icml": (None, True), "neurips": (None, True),
 }
 
 # The seven checks, in the order research-notes 10 numbers them.
@@ -1394,6 +1406,8 @@ def build_venue(seed, fetcher, root=None, today=None, cache_checklists=True):
                   "reference_style", "reporting_checklists", "submission_steps", "template",
                   "license_of_summary_source"):
         guidelines[field] = checklists if field == "reporting_checklists" else deepcopy(seed["guidelines"][field])
+    csl, bibtex = CITATION_STYLES.get(seed["venue"], (None, False))
+    guidelines["reference_style"].update(csl=csl, bibtex=bibtex)
     guidelines["verification"] = {"fully_verified_fields": verified, "unverified_fields": unverified}
     check(guidelines, load_schema("guidelines"), name="guidelines/%s/%s" % (seed["venue"], GUIDELINES_JSON))
 
@@ -1545,6 +1559,12 @@ def _words(text):
     return len(_WORD.findall(strip_tags(text)))
 
 
+def _body(text):
+    """A LaTeX source's document body: a preamble defines environments (pandoc-crossref's subfigures open a `figure` in
+    one, ticket 118) and holds no display item."""
+    return text.split(r"\begin{document}", 1)[-1]
+
+
 def _normalize(name):
     return re.sub(r"[^a-z0-9]+", "", str(name or "").lower())
 
@@ -1686,6 +1706,11 @@ class Manuscript:
                     return found.group(1).strip()
         return None
 
+    def has_authors(self):
+        """Whether a LaTeX draft names its authors in `\\author{}`, as a compiled paper does (ticket 118): a venue asking
+        for Authors asks for them there, not for a section called so."""
+        return self.kind == "latex" and any(re.search(r"\\author\s*(?:\[[^\]]*\])?\s*\{\s*\S", text) for text in self.sources.values())
+
     def body_words(self, excluded=()):
         """Words of main text: every named section but the abstract, the references, the venue's
         exclusions, and the figure legends inside what is left."""
@@ -1721,7 +1746,7 @@ class Manuscript:
         found = []
         for path, text in self.sources.items():
             if self.kind == "latex":
-                for kind, block in _TEX_FIGURE.findall(text):
+                for kind, block in _TEX_FIGURE.findall(_body(text)):
                     if kind != "figure":
                         continue
                     caption = _TEX_CAPTION.search(block)
@@ -1743,7 +1768,7 @@ class Manuscript:
         blocks = 0
         for text in self.sources.values():
             if self.kind == "latex":
-                blocks += sum(1 for kind, _ in _TEX_FIGURE.findall(text) if kind == "table")
+                blocks += sum(1 for kind, _ in _TEX_FIGURE.findall(_body(text)) if kind == "table")
             else:
                 blocks += sum(1 for chunk in _PARAGRAPH.split(text) if len(_MD_TABLE_ROW.findall(chunk)) >= 2)
         return blocks
@@ -2048,6 +2073,7 @@ def check_structure(manuscript, guidelines):
         name for name in required
         if not any(heading_matches(name, heading) for heading in headings)
         and not (title and _normalize(name) in ("title", "titlepage"))
+        and not (_normalize(name) in ("authors", "author") and manuscript.has_authors())
     ]
     findings = []
     ordered = manuscript.ordered_section_names() if not guidelines["structure_flexible"] else None

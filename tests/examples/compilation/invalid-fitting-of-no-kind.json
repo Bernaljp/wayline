@@ -1,0 +1,25 @@
+{
+  "name": "nature",
+  "venue": "nature",
+  "paper_version": 1,
+  "compiled": "2026-10-23T09:10:00.000Z",
+  "outcome": "compiled",
+  "outputs": {
+    "latex": {"file": "latex/paper.tex", "problem": null},
+    "pdf": {"file": "paper.pdf", "problem": null},
+    "docx": {"file": "paper.docx", "problem": null},
+    "markdown": {"file": "paper.md", "problem": null}
+  },
+  "document_class": "article",
+  "class_vendored": false,
+  "csl": "nature.csl",
+  "bibtex": false,
+  "pages": 3,
+  "main_pages": 2,
+  "tools": {},
+  "citations": {"cited": [], "to_be_resolved": [], "dropped": []},
+  "retried": null,
+  "checks": [],
+  "fitting": {"limits": [], "outcome": "shortened", "problems": [], "moved": [], "model": null, "session_id": null, "usage": null},
+  "tag_text": []
+}

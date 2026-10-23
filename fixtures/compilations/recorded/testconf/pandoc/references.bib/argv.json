@@ -1,0 +1,10 @@
+[
+ "~/.wayline/tools/envs/pandoc/bin/pandoc",
+ "{build}/references.json",
+ "--from",
+ "csljson",
+ "--to",
+ "bibtex",
+ "-o",
+ "{build}/latex/references.bib"
+]

@@ -546,6 +546,24 @@ class OrderRunTest(DrawingRunCase):
         composed = self.index(lambda event: event["event"] == "paper_order" and event["payload"]["action"] == "composed")
         self.assertLess(composed, len(self.events()) - 1)
 
+    def test_once_composed_the_order_compiles_the_paper_and_a_compilation_that_cannot_be_made_is_said(self):
+        """Ticket 118: the conductor compiles `compilations/plain/` after the composition; with no pandoc recorded in
+        `tools.json`, the compilation records why each output is missing and the order still ends composed."""
+        self.ledger.append_event("run_started", {"resume": False, "harness_tag": None, "autonomy": "interactive",
+                                                 "radius": "moderate", "pid": 1})
+        self.ledger.append_event("run_ended", {"reason": "objectives_closed"})
+        paper.order(self.project, start=None)
+        with worker.use_fake() as fake:
+            fake.script(respond=self.plotter(), role="plotter")
+            fake.script(respond=Writer(self.project), role="writer")
+            driven = self.conductor()
+            self.until(driven, lambda: False)
+        self.assertEqual([event["payload"]["action"] for event in self.order_events()], ["ordered", "composed"])
+        record = json.loads((self.project / "research" / "paper" / "compilations" / "plain" / "compilation.json").read_text())
+        self.assertEqual(record["outcome"], "failed")
+        self.assertIn("is not recorded", record["outputs"]["latex"]["problem"])
+        self.assertIn("compilation plain of version 1: failed", driven.out.getvalue())
+
     def test_a_composition_that_fails_closes_the_order_and_is_said(self):
         self.ledger.append_event("run_started", {"resume": False, "harness_tag": None, "autonomy": "interactive",
                                                  "radius": "moderate", "pid": 1})

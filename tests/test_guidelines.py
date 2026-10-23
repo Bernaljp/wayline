@@ -263,7 +263,22 @@ class ShippedGuidelinesTest(unittest.TestCase):
                     self.assertNotIn(path.suffix.lower(), (".zip", ".docx", ".cls", ".sty", ".tex"))
                     self.assertIn(path.name, (venue.GUIDELINES_JSON, venue.SOURCE_MD) + tuple(
                         form["cache_as"] for seed in venue.VENUES
-                        for form in seed["guidelines"]["reporting_checklists"] if form.get("cache_as")))
+                        for form in seed["guidelines"]["reporting_checklists"] if form.get("cache_as")) + tuple(
+                        csl for csl, _ in venue.CITATION_STYLES.values() if csl))
+
+    def test_each_venue_names_its_citation_style_and_the_style_is_vendored_beside_it(self):
+        """Ticket 118: a compilation cites through the CSL style `reference_style.csl` names, an independent style of the
+        Citation Style Language styles, since pandoc reads no dependent one."""
+        for seed in venue.VENUES:
+            with self.subTest(venue=seed["venue"]):
+                style = venue.read_guidelines(HARNESS_ROOT, seed["venue"])["reference_style"]
+                self.assertEqual((style["csl"], style["bibtex"]), venue.CITATION_STYLES[seed["venue"]])
+                if style["csl"]:
+                    text = (HARNESS_ROOT / venue.GUIDELINES_DIR / seed["venue"] / style["csl"]).read_text(encoding="utf-8")
+                    self.assertIn('xmlns="http://purl.org/net/xbiblio/csl"', text)
+                    self.assertNotIn('rel="independent-parent"', text)
+        self.assertEqual(venue.CITATION_STYLES["nature-methods"], ("nature.csl", False))
+        self.assertEqual(venue.CITATION_STYLES["neurips"], (None, True))
 
 
 class ManuscriptTest(unittest.TestCase):

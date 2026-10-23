@@ -1,0 +1,10 @@
+{
+  "abstract": null,
+  "introduction": "## State of the art {#introduction-state-of-the-art}\n\nPolynomial fits are standard {ref:smith-2020-fits#abstract}.",
+  "results": null,
+  "discussion": null,
+  "methods": null,
+  "supplement": "## Earlier claims {#supplement-earlier-claims}\n\nA late one agreed {ref:doi:10.5555/late#abstract}.",
+  "moved": ["the Introduction's earlier claims"],
+  "notes": ""
+}

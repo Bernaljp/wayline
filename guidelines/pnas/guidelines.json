@@ -48,7 +48,9 @@
   "reference_style": {
     "style": "Numbered in order of first citation, following the CSE Manual (8th edition); more than five authors are listed as the first author and 'et al.'; the LaTeX bibliography style is pnas-new.bst.",
     "max_count": null,
-    "citation": "numbered"
+    "citation": "numbered",
+    "csl": "pnas.csl",
+    "bibtex": true
   },
   "reporting_checklists": [
     {

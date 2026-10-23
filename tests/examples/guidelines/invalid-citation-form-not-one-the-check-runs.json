@@ -45,7 +45,9 @@
   "reference_style": {
     "style": "Vancouver (ICMJE), numbered in citation-sequence order, in-text numbers in square brackets",
     "max_count": null,
-    "citation": "Vancouver"
+    "citation": "Vancouver",
+    "csl": "plos.csl",
+    "bibtex": false
   },
   "reporting_checklists": [
     {

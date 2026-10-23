@@ -56,7 +56,9 @@
   "reference_style": {
     "style": "Numbered in order of first citation, superscript in the text; 'et al.' only after 10 authors.",
     "max_count": null,
-    "citation": "numbered"
+    "citation": "numbered",
+    "csl": "cell.csl",
+    "bibtex": false
   },
   "reporting_checklists": [
     {

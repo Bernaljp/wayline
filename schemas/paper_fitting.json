@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "paper_fitting",
+  "description": "What a compilation's one fitting writer session returns (Implementation Decision 17; ticket 118) when the paper exceeds a venue's limit: each part it changed, cut or with text moved to the supplement, as its own field, and null for each part it left as it is. It adds no claim, tag, or number; code's Type-A check refuses a fitted paper missing a claim tag or with a number the paper did not have. The fitted parts belong to that compilation alone.",
+  "type": "object",
+  "required": ["abstract", "introduction", "results", "discussion", "methods", "supplement", "moved", "notes"],
+  "additionalProperties": false,
+  "properties": {
+    "abstract": {"type": ["string", "null"]},
+    "introduction": {"type": ["string", "null"]},
+    "results": {"type": ["string", "null"]},
+    "discussion": {"type": ["string", "null"]},
+    "methods": {"type": ["string", "null"]},
+    "supplement": {"type": ["string", "null"]},
+    "moved": {"type": "array", "items": {"type": "string"}, "description": "each piece moved to the supplement, one line each"},
+    "notes": {"type": "string"}
+  }
+}

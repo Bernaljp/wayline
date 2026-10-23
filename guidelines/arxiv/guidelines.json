@@ -36,7 +36,9 @@
   "reference_style": {
     "style": "None: arXiv has no house citation style and leaves it to the author or the target journal.",
     "max_count": null,
-    "citation": "any"
+    "citation": "any",
+    "csl": null,
+    "bibtex": false
   },
   "reporting_checklists": [],
   "submission_steps": [

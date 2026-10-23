@@ -1,0 +1,9 @@
+[
+ "/usr/bin/latexmk",
+ "-cd",
+ "-xelatex",
+ "-interaction=nonstopmode",
+ "-halt-on-error",
+ "-file-line-error",
+ "{build}/latex/paper.tex"
+]

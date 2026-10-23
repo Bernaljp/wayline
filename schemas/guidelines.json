@@ -50,7 +50,7 @@
     },
     "reference_style": {
       "type": "object",
-      "required": ["style", "max_count", "citation"],
+      "required": ["style", "max_count", "citation", "csl", "bibtex"],
       "additionalProperties": false,
       "properties": {
         "style": {"type": "string", "description": "the style in the venue's words, for a human"},
@@ -59,7 +59,13 @@
           "type": "string",
           "enum": ["numbered", "author-date", "any", "unknown"],
           "description": "the in-text citation form the check detects; any where the venue accepts what the author uses, unknown where nothing said"
-        }
+        },
+        "csl": {
+          "type": ["string", "null"],
+          "pattern": "^[a-z0-9-]+\\.csl$",
+          "description": "the CSL style a compilation cites through (ticket 118), vendored beside this file from the Citation Style Language styles; null where pandoc's default serves"
+        },
+        "bibtex": {"type": "boolean", "description": "whether the venue's LaTeX template takes a BibTeX .bib: a compilation then writes references.bib and cites through natbib"}
       }
     },
     "reporting_checklists": {

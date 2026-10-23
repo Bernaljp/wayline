@@ -3363,10 +3363,27 @@ class Conductor:
         except (paper.PaperError, worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
             self.say("  paper order %s failed: %s" % (order.get("order"), failure))
             paper.fail(self.project, order, str(failure))
+        else:
+            self._compile(order)
         self._tail()
         if order.get("run"):
             self.ledger.append_event(RUN_ENDED, {"reason": order["run"]})
             result.ended, result.reason = True, order["run"]
+
+    def _compile(self, order):
+        """Once the paper is composed: the scout's last retry and the order's compilations (ticket 118), code alone but for
+        one fitting session when the paper exceeds a venue's limit. A compilation that cannot be made is said and never
+        fails the order, whose paper stands."""
+        from wayline import compilations
+
+        def beat():  # a build of several minutes is the wave's work, not a stall
+            self.last_wave_at = now_ts()
+            self._beat()
+        try:
+            compilations.after_order(self.project, order, harness_root=self.harness_root, policy=self.policy,
+                                     fetcher=self.scout_fetcher, say=self.say, beat=beat)
+        except (compilations.CompilationError, ValueError, OSError) as failure:
+            self.say("  paper order %s: the compilations could not be made: %s" % (order.get("order"), failure))
 
     # --- drawings at rest points (decision 17; ticket 100) ---
 

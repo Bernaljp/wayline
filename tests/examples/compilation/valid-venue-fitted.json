@@ -1,0 +1,29 @@
+{
+  "name": "testconf",
+  "venue": "testconf",
+  "paper_version": 2,
+  "compiled": "2026-10-23T09:12:00.000Z",
+  "outcome": "partial",
+  "outputs": {
+    "latex": {"file": "latex/paper.tex", "problem": null},
+    "pdf": {"file": null, "problem": "latexmk failed (exit 12: ! LaTeX Error: File `testconf.cls' not found.)"},
+    "docx": {"file": "paper.docx", "problem": null},
+    "markdown": {"file": "paper.md", "problem": null},
+    "bibtex": {"file": "references.bib", "problem": null}
+  },
+  "document_class": "testconf",
+  "class_vendored": true,
+  "csl": null,
+  "bibtex": true,
+  "pages": null,
+  "main_pages": null,
+  "tools": {"pandoc": "3.11"},
+  "citations": {"cited": ["smith-2020-fits"], "to_be_resolved": [],
+                "dropped": [{"work": "kim-2017-survey", "why": "over the venue's 3 references, cited only in Introduction sentences citing several works"}]},
+  "retried": null,
+  "checks": [{"check": "length", "level": "ok", "message": "the main text is 100 words, within 120."}],
+  "fitting": {"limits": ["the main text is 139 words, over the 120 The Test Conference allows."], "outcome": "fitted", "problems": [],
+              "moved": ["the Introduction's earlier claims"], "model": "claude-opus-5-5", "session_id": "fit-1",
+              "usage": {"input_tokens": 9000, "output_tokens": 1200}, "still_over": []},
+  "tag_text": []
+}

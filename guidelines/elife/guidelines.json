@@ -42,7 +42,9 @@
   "reference_style": {
     "style": "Any reference style is accepted and reformatted in production; APA is the closest match to eLife's own. DOIs are requested where possible.",
     "max_count": null,
-    "citation": "any"
+    "citation": "any",
+    "csl": "elife.csl",
+    "bibtex": false
   },
   "reporting_checklists": [
     {

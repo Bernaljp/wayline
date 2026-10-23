@@ -1,0 +1,25 @@
+{
+  "name": "plain",
+  "venue": null,
+  "paper_version": 1,
+  "compiled": "2026-10-23T09:10:00.000Z",
+  "outcome": "compiled",
+  "outputs": {
+    "latex": {"file": "latex/paper.tex", "problem": null},
+    "pdf": {"file": "paper.pdf", "problem": null},
+    "docx": {"file": "paper.docx", "problem": null},
+    "markdown": {"file": "paper.md", "problem": null}
+  },
+  "document_class": "article",
+  "class_vendored": false,
+  "csl": null,
+  "bibtex": false,
+  "pages": 3,
+  "main_pages": 2,
+  "tools": {"latexmk": "4.83", "pandoc": "3.11", "pandoc-crossref": "0.3.25", "pdfinfo": "24.02.0"},
+  "citations": {"cited": ["smith-2020-fits", "late-work"], "to_be_resolved": ["lost-work"], "dropped": []},
+  "retried": {"asked": ["lost-work", "late-work"], "found": ["late-work"], "still": ["lost-work"]},
+  "checks": [],
+  "fitting": null,
+  "tag_text": []
+}

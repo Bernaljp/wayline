@@ -48,7 +48,9 @@
   "reference_style": {
     "style": "Vancouver, numbered; footnotes rather than endnotes are asked for where notes are needed.",
     "max_count": null,
-    "citation": "numbered"
+    "citation": "numbered",
+    "csl": "springer-vancouver-brackets.csl",
+    "bibtex": false
   },
   "reporting_checklists": [
     {

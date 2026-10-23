@@ -37,7 +37,9 @@
   "reference_style": {
     "style": "Not stated; the guidance is about content, replacing arXiv citations with peer-reviewed versions and fixing bibliographic capitalisation.",
     "max_count": null,
-    "citation": "unknown"
+    "citation": "unknown",
+    "csl": null,
+    "bibtex": true
   },
   "reporting_checklists": [],
   "submission_steps": [
