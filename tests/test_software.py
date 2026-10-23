@@ -13,6 +13,7 @@ owner's `~/.wayline/tools`: each test installs into a temporary tools home.
 """
 
 import argparse
+import gzip
 import hashlib
 import io
 import json
@@ -41,9 +42,13 @@ WRITTEN = FIXTURES_DIR / "tools" / "written"
 
 
 def julia_tarball(version=software.JULIA_VERSION):
-    """A tarball laid out as Julia's release is: one `julia-<version>/` folder with `bin/julia` and a library symlink."""
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+    """A tarball laid out as Julia's release is: one `julia-<version>/` folder with `bin/julia` and a library symlink.
+
+    The gzip header's time is fixed, so every build has the same bytes and the same digest; with the build time in it, a
+    test comparing a recorded digest with a second build failed whenever the two straddled a second.
+    """
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as tar:
         body = b"#!/bin/sh\necho julia\n"
         info = tarfile.TarInfo("julia-%s/bin/julia" % version)
         info.size, info.mode = len(body), 0o755
@@ -55,6 +60,9 @@ def julia_tarball(version=software.JULIA_VERSION):
         link = tarfile.TarInfo("julia-%s/lib/libjulia.so" % version)
         link.type, link.linkname = tarfile.SYMTYPE, "libjulia.so.1.12"
         tar.addfile(link)
+    buffer = io.BytesIO()
+    with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as packed:
+        packed.write(raw.getvalue())
     return buffer.getvalue()
 
 
