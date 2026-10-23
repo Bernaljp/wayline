@@ -378,6 +378,7 @@ function keepOnTheWorkstation(node) {
 function tableElement(headings, rows, columns) {
   const head = el('tr', {}, headings.map((name, index) => el('th', { class: (columns || [])[index] || null, text: name })));
   const body = rows.map((row) => el('tr', {}, row.map((cell, index) => {
+    if (cell instanceof Node) return el('td', { class: (columns || [])[index] || null }, [cell]);  // a cell that acts (a reason's edit)
     const text = cell === null || cell === undefined ? '' : String(cell);
     const kind = (columns || [])[index] || null;
     if (kind === 'clamp') {
@@ -2422,6 +2423,7 @@ function itemRow(project, row) {
   const acts = [];
   if (row.link !== false) acts.push(el('a', { class: 'action', href: routeTo(project, row.id), text: 'view' }));
   if (row.insert !== false) acts.push(insertButton(project, row.id));
+  acts.push(...(row.acts || []));
   if (acts.length) line.push(el('span', { class: 'row-acts' }, acts));
   return el('li', { class: 'row', 'data-item': row.id }, [el('div', { class: 'row-line' }, line), ...(row.more || [])]);
 }
@@ -2658,6 +2660,7 @@ function problemsList(problems) {
 function renderedRow(project, file, lines) {
   return itemRow(project, {
     id: file.id, label: file.title, link: file.exists,
+    acts: file.editable && file.exists ? [editButton(project, file)] : [],
     more: [more(file.exists ? `rendered ${file.rendered || 'by code'}` : 'not rendered yet'), ...(lines || [])],
   });
 }
@@ -2736,13 +2739,135 @@ function renderMethods(methods, project) {
   replace(document.getElementById('paper-methods-body'), [
     subhead('parameters', parameters.length),
     tableOrNone(['method', 'parameter', 'value', 'default', 'reason', 'whose reason', 'code'],
-      parameters.map((row) => [row.method, row.name, row.value, row.default, row.reason, row.by === 'owner' ? 'yours' : `ticket ${row.ticket}`, row.code]),
+      parameters.map((row) => [row.method, row.name, row.value, row.default, reasonCell(project, row), row.by === 'owner' ? 'yours' : `ticket ${row.ticket}`, row.code]),
       'no parameter is recorded yet: the results that ran list theirs', ['short', 'short', 'short', 'short', 'text', 'short', 'text']),
     subhead('methods with no code behind them', missing.length),
     rowsOrNone(missing, (entry) => itemRow(project, {
       id: entry.passage, title: `${entry.heading ? `${entry.heading}: ` : ''}${entry.named}`, more: [more(entry.why)],
     }), 'every method Methods names has code behind it'),
   ]);
+}
+
+// --- the editor (ticket 113) ----------------------------------------------------------------------------------
+//
+// A section or the outline opens as plain text with the render stamp it was read under; its save is the `edit` action
+// (`wayline edit`), which writes the text back under that stamp, so the next render takes it in as it would an edit made
+// in a terminal. A 409 means code rendered the file again meanwhile: both versions show side by side and nothing is
+// written until the owner keeps theirs or takes the new render. A reason in Methods' table is edited in its row and
+// saved as the `reason` action; a poll that redraws the table keeps the reason being written (`state.reasonDraft`).
+
+const editor = { project: null, target: null, title: '', stamp: null };
+
+function editButton(project, file) {
+  const button = el('button', { type: 'button', class: 'action', text: 'edit', title: `edit ${file.title} as plain text` });
+  button.addEventListener('click', () => openEditor(project, file.id, file.title));
+  return button;
+}
+
+function editorMode(conflict, current) {
+  document.getElementById('editor-theirs-pane').hidden = !conflict;
+  document.getElementById('editor-choice').hidden = !conflict;
+  document.getElementById('editor-save').hidden = conflict;
+  document.getElementById('editor-mine-label').textContent = conflict ? 'your text' : 'the text';
+  document.getElementById('editor-theirs').value = conflict ? current.text : '';
+}
+
+async function openEditor(project, target, title) {
+  const dialog = document.getElementById('editor');
+  try {
+    const headers = TOKEN ? { 'X-Wayline-Token': TOKEN } : {};
+    const response = await fetch(`/api/projects/${encodeURIComponent(project)}/edit/${encodeURIComponent(target)}`, { cache: 'no-store', headers });
+    const found = await response.json();
+    if (!response.ok) throw new Error(found.line || `${response.status}`);
+    Object.assign(editor, { project, target, title, stamp: found.stamp, opened: found.text, newer: null });
+    document.getElementById('editor-title').textContent = `Edit ${title}`;
+    document.getElementById('editor-text').value = found.text;
+    noteText('editor-note', TOKEN ? 'Saved here, it is taken in by the next render as your edit of the file.'
+      : 'Saving needs the dashboard token: open the URL wayline serve printed, which carries it.', !TOKEN);
+    editorMode(false);
+    if (!dialog.open) dialog.showModal();
+    document.getElementById('editor-text').focus();
+  } catch (failure) {
+    say(`edit ${title}: ${failure.message || failure}`, true);
+  }
+}
+
+async function saveEditor(overNewer) {
+  const text = document.getElementById('editor-text').value;
+  const body = { target: editor.target, text, stamp: editor.stamp, over_newer: Boolean(overNewer) };
+  const sent = { 'X-Wayline-Token': TOKEN, 'Content-Type': 'application/json' };
+  try {
+    const response = await fetch(`/api/projects/${encodeURIComponent(editor.project)}/actions/edit`, { method: 'POST', cache: 'no-store', headers: sent, body: JSON.stringify(body) });
+    const reply = await response.json().catch(() => ({ ok: false, error: `${response.status} ${response.statusText}` }));
+    if (response.status === 409 && reply.current) {
+      noteText('editor-note', 'Code rendered this file again while it was open. Keep yours (read against what you opened), or take the new render.', true);
+      editorMode(true, reply.current);
+      editor.newer = reply.current;
+      return;
+    }
+    if (!response.ok || !reply.ok) throw new Error(reply.error || `${response.status}`);
+    document.getElementById('editor').close();
+    say(`${editor.title}: saved; the next render takes it in`);
+    refreshViews();
+  } catch (failure) {
+    noteText('editor-note', `save: ${failure.message || failure}`, true);
+  }
+}
+
+function takeTheirs() {
+  const newer = editor.newer;
+  if (!newer) return;
+  editor.stamp = newer.stamp;
+  editor.opened = newer.text;
+  editor.newer = null;
+  document.getElementById('editor-text').value = newer.text;
+  noteText('editor-note', 'This is the new render; your text was set aside. Edit it and save, or close.');
+  editorMode(false);
+}
+
+function wireEditor() {
+  const dialog = document.getElementById('editor');
+  document.getElementById('editor-save').addEventListener('click', () => saveEditor(false));
+  document.getElementById('editor-keep-mine').addEventListener('click', () => saveEditor(true));
+  document.getElementById('editor-take-theirs').addEventListener('click', takeTheirs);
+  // Closing (the button, or Escape) never drops an unsaved edit without asking.
+  const unsaved = () => document.getElementById('editor-text').value !== editor.opened;
+  document.getElementById('editor-close').addEventListener('click', () => {
+    if (!unsaved() || window.confirm('Close without saving your edit?')) dialog.close();
+  });
+  dialog.addEventListener('cancel', (event) => {
+    if (unsaved() && !window.confirm('Close without saving your edit?')) event.preventDefault();
+  });
+}
+
+function reasonCell(project, row) {
+  const draft = state.reasonDraft;
+  if (!row.parameter) return row.reason || '';
+  if (!draft || draft.project !== project || draft.parameter !== row.parameter) {
+    const button = el('button', { type: 'button', class: 'action', text: 'edit', title: 'edit this reason; it is taken in as yours' });
+    button.addEventListener('click', () => {
+      state.reasonDraft = { project, parameter: row.parameter, text: row.reason || '' };
+      loadPaperAgain();
+    });
+    return el('span', { class: 'reason-edit' }, [el('span', { text: row.reason || '' }), button]);
+  }
+  const box = el('textarea', { 'aria-label': `the reason for ${row.parameter}` });
+  box.value = draft.text;
+  box.addEventListener('input', () => { draft.text = box.value; });
+  const save = el('button', { type: 'button', class: 'action', text: 'save' });
+  save.addEventListener('click', async () => {
+    const reply = await perform('reason', { parameter: row.parameter, reason: box.value }, () => `the reason for ${row.parameter}: saved as yours`, project);
+    if (reply) state.reasonDraft = null;
+  });
+  const cancel = el('button', { type: 'button', class: 'action', text: 'cancel' });
+  cancel.addEventListener('click', () => { state.reasonDraft = null; loadPaperAgain(); });
+  return el('span', { class: 'reason-edit' }, [box, save, cancel]);
+}
+
+// Draw Paper again from the server now, whatever the tag: a reason's row changed between shown and being written.
+function loadPaperAgain() {
+  delete state.tags.paper;
+  loadPaper();
 }
 
 // --- Inherited (ticket 111) ----------------------------------------------------------------------------------
@@ -3663,7 +3788,7 @@ function wireChat() {
   });
   document.getElementById('chat-pick').addEventListener('change', (event) => setChatProject(event.target.value));
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && chat.open && !document.getElementById('viewer').open) openChat(false);
+    if (event.key === 'Escape' && chat.open && !document.getElementById('viewer').open && !document.getElementById('editor').open) openChat(false);
   });
   if (!TOKEN) chatSay('The chat needs the dashboard token: open the URL wayline serve printed, which carries it.');
   openChat(remembered(STORE.chatOpen) === '1', true);
@@ -3681,6 +3806,7 @@ wireControls();
 wireIntake();
 wireFeedback();
 wireChat();
+wireEditor();
 intakeEmpty();
 if (!TOKEN) say('Actions need the dashboard token: open the URL wayline serve printed, which carries it. The views work without it.');
 window.addEventListener('hashchange', route);

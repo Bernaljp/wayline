@@ -142,7 +142,8 @@ TEXT_TYPE = "text/plain; charset=utf-8"
 # `mark` is the marks view's (ticket 112): the one action decision 17 adds for it. The last six are what a card of the
 # chat runs on the owner's Confirm (ticket 114): the routing table's confirmed verbs, each the function its verb calls.
 ACTIONS = ("answer", "autonomy", "pause", "resume", "switch", "cancel", "rerun", "pacing", "model_fallback", "ladder_changes", "intake", "feedback",
-           "mark", "run", "stop_when", "budget", "consolidate", "paper", "public")
+           "mark", "run", "stop_when", "budget", "consolidate", "paper", "public",
+           "edit", "reason")
 ACTION_ROUTE = re.compile(r"^/api/projects/(?P<project>[^/]+)/actions/(?P<name>[^/]+)/?$")
 # The chat (ticket 114): a message posted, and the owner's Confirm or Not now on one message's card.
 CHAT_ROUTE = re.compile(r"^/api/projects/(?P<project>[^/]+)/chat/?$")
@@ -1266,6 +1267,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/marks/?$"), "api_marks"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/waiting/?$"), "api_waiting"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/items/(?P<item>[^/]+)/?$"), "api_item"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/edit/(?P<target>[^/]+)/?$"), "api_edit"),
         (CHAT_ROUTE, "api_chat"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/paper/card/?$"), "api_paper_card"),
         (ACTION_ROUTE, "api_action_get"),
@@ -1329,7 +1331,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             project = self._project(match.group("project"))
             status, report = run_action(name, project, body, self.headers, self.server)
         except ActionConflict as failure:
-            return self._action_reply(HTTPStatus.CONFLICT, {"ok": False, "action": name, "error": str(failure)})
+            return self._action_reply(HTTPStatus.CONFLICT, dict({"ok": False, "action": name, "error": str(failure)},
+                                                                **getattr(failure, "versions", {})))
         except ValueError as failure:  # a request the action cannot take, or a verb's own refusal (ProjectError, TicketError)
             return self._action_reply(HTTPStatus.BAD_REQUEST, {"ok": False, "action": name, "error": str(failure)})
         except OSError as failure:
@@ -1676,6 +1679,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                                                                ensure_ascii=False).encode("utf-8"), JSON_TYPE, (("Cache-Control", "no-cache"),))
         return self._json(found, tag)
 
+    def api_edit(self, query, project, target):
+        """What the editor opens (ticket 113): a section's or the outline's text below its render stamp, and the stamp;
+        anything else, a report, the account, References, or a part of the paper, is a 404: it offers no edit."""
+        from wayline import edits
+        path = self._project(project)
+        try:
+            found = edits.opened(path, unquote(target))
+        except edits.EditError as failure:
+            return self._send(HTTPStatus.NOT_FOUND, json.dumps({"found": False, "line": str(failure)}, ensure_ascii=False).encode("utf-8"),
+                              JSON_TYPE, (("Cache-Control", "no-store"),))
+        return self._send(HTTPStatus.OK, json.dumps(found, ensure_ascii=False).encode("utf-8"), JSON_TYPE, (("Cache-Control", "no-store"),))
+
     def api_chat(self, query, project):
         """The chat's conversation (ticket 114), tagged by its messages and a running session's stream. A queue no thread
         here answers (the dashboard restarted) is taken up first, so the poll that finds it starts it again."""
@@ -1943,9 +1958,31 @@ def run_action(name, project, body, headers=None, server=None, on_failure=None):
     if name == "switch":
         _fields(body)
         return _switch(project, server)
+    if name in ("edit", "reason"):
+        return _edit(name, project, body)
     if name in CARD_ACTIONS:
         return _card_action(name, project, body, server, on_failure)
     raise DashboardError("no action %r; the actions are %s" % (name, ", ".join(ACTIONS)))
+
+
+def _edit(name, project, body):
+    """The editor's saves (ticket 113): `edit` is `wayline edit`, writing a section's or the outline's text under the
+    stamp the editor opened, refused with both versions over a newer render unless `over_newer`; `reason` is the owner's
+    reason for one row of Methods' parameter table, as `wayline passage add --parameter` writes it."""
+    from wayline import edits
+    try:
+        if name == "reason":
+            fields = _fields(body, ("parameter", "reason"))
+            return HTTPStatus.OK, {"passage": edits.reason(project, _string(fields, "parameter"), _string(fields, "reason"))}
+        fields = _fields(body, ("target", "text", "stamp"), ("over_newer",))
+        over = fields.get("over_newer", False)
+        if not isinstance(over, bool):
+            raise DashboardError("over_newer is true or false")
+        return HTTPStatus.OK, edits.save(project, _string(fields, "target"), _string(fields, "text"), _string(fields, "stamp"), over)
+    except edits.EditConflict as failure:
+        conflict = ActionConflict(str(failure))
+        conflict.versions = {"current": failure.current, "yours": failure.yours}
+        raise conflict from None
 
 
 # The actions a chat's card runs on the owner's Confirm (ticket 114), each the function its confirmed verb calls.

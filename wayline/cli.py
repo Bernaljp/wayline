@@ -79,6 +79,10 @@ VERBS = [
     Verb("passage", "passage add --section <s> --heading <h> [--replaces <id>] \"<text>\"",
          "record an owner's passage in one of the paper's five sections, by: owner, journaled as passage (the conversation calls it)", "views",
          lazy("wayline.sections", "passage_command")),
+    Verb("edit", "edit <section|outline> [--from <file>|-] [--stamp \"<line>\"] [--over-newer] | show <section|outline> [--json]",
+         "save the owner's edit of a section or the outline as an edit of the file would be, taken in by the next render; "
+         "refused over a newer render unless --over-newer (the dashboard's editor calls it)", "views",
+         lazy("wayline.edits", "edit_command")),
     Verb("result", "result merge <id> <into> | rename <id> \"<heading>\" | draw <id>",
          "merge one result into another, give a result a new heading, or draw it again now, on the owner's word (the conversation calls it)", "views",
          lazy("wayline.results", "result_command")),
@@ -128,7 +132,7 @@ VERBS = [
 WRITING_VERBS = frozenset((
     "intake", "absorb", "position", "grill", "specify", "plan", "run", "pause", "resume", "stop", "cancel", "rerun",
     "answer", "switch", "feedback", "tick", "evolve", "promote", "fixture", "figure", "docs", "paper", "report",
-    "objective", "mark", "review", "reference", "document", "passage", "consolidate", "concern", "result", "outline", "ticket",
+    "objective", "mark", "review", "reference", "document", "passage", "consolidate", "concern", "result", "outline", "ticket", "edit",
 ))
 
 
