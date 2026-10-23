@@ -3363,8 +3363,13 @@ class Conductor:
         except (paper.PaperError, worker.LaunchError, worker.RoleError, ValueError, OSError) as failure:
             self.say("  paper order %s failed: %s" % (order.get("order"), failure))
             paper.fail(self.project, order, str(failure))
+            ended = "failed: %s; nothing under research/paper/ changed" % failure
         else:
-            self._compile(order)
+            made = self._compile(order)
+            ended = "composed: research/paper/PAPER.md says what was made%s" % (
+                "; compiled as %s" % ", ".join(made) if made else "")
+        # The order's end reaches the owner outside `autonomous` (ticket 121); `notify.holds` keeps it there otherwise.
+        self.notify(notify.PAPER_ENDED, "%s: paper order %s %s" % (self.project.name, order.get("order"), ended), self.project, None)
         self._tail()
         if order.get("run"):
             self.ledger.append_event(RUN_ENDED, {"reason": order["run"]})
@@ -3373,17 +3378,19 @@ class Conductor:
     def _compile(self, order):
         """Once the paper is composed: the scout's last retry and the order's compilations (ticket 118), code alone but for
         one fitting session when the paper exceeds a venue's limit. A compilation that cannot be made is said and never
-        fails the order, whose paper stands."""
+        fails the order, whose paper stands. Returns the names of the compilations made, each with its outcome."""
         from wayline import compilations
 
         def beat():  # a build of several minutes is the wave's work, not a stall
             self.last_wave_at = now_ts()
             self._beat()
         try:
-            compilations.after_order(self.project, order, harness_root=self.harness_root, policy=self.policy,
-                                     fetcher=self.scout_fetcher, say=self.say, beat=beat)
+            done = compilations.after_order(self.project, order, harness_root=self.harness_root, policy=self.policy,
+                                            fetcher=self.scout_fetcher, say=self.say, beat=beat)
         except (compilations.CompilationError, ValueError, OSError) as failure:
             self.say("  paper order %s: the compilations could not be made: %s" % (order.get("order"), failure))
+            return []
+        return ["%s (%s)" % (made["name"], made["outcome"]) for made in done["compilations"]]
 
     # --- drawings at rest points (decision 17; ticket 100) ---
 

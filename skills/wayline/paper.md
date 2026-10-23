@@ -40,6 +40,10 @@ One writer session then composes the whole paper from the outline and the sectio
 answers, what was left out and why, the owner's passages whose wording changed, what the writer proposes, and the
 cost. Read `PAPER.md` to the owner when they ask how the paper stands; never compose or edit a part yourself.
 
+When the owner picks one of the alternatives ("use the second title"), record it with `wayline paper choose title-2
+--project .`: free, no card. Its text becomes the part's, text no alternative held is kept as the next alternative, and
+each compilation is "made before" that part changed until it is compiled again or the paper is ordered again.
+
 The figures come from the plots the owner marked, through code's figure plan: each main-text result gets one figure
 holding every plot marked keep (or, with none marked keep, every plot its synthesis cites), with no panel cap; maybe
 and unmarked plots go to its supplementary figure, and dropped plots never appear. The batch shows each figure's

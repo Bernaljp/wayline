@@ -35,6 +35,7 @@ journaled. The page keeps, in its own browser, the hash each report had when the
 report whose hash moved with a dot. A renewed report notifies nowhere: nothing here or in the renders sends a notice.
 """
 
+import json
 import os
 import re
 from pathlib import Path
@@ -343,7 +344,8 @@ def _section_rows(project, problems):
                 problems.append("%s: %s" % (sections.TITLES[name], failure))
         rows.append({"id": name, "title": sections.TITLES[name], "path": path, "exists": (project / path).is_file(),
                      "rendered": stamp.get("rendered_at"), "passages": standing,
-                     "editable": name != sections.REFERENCES})  # References is code's alone (ticket 113)
+                     "editable": name != sections.REFERENCES,  # References is code's alone (ticket 113)
+                     "consolidates": name in sections.WRITTEN})  # a consolidation rewrites these (ticket 88), from a card (121)
     return rows
 
 
@@ -371,12 +373,32 @@ def _references(project, problems):
                         "year": metadata.get("year"), "venue": metadata.get("container"),
                         "identifier": references.identifier_of(record)})
     unresolved = []
+    asked = _order_batch_items(project, problems)
     for work, state, detail in view["unresolved"]:
         record = work.record or {}
         query = record.get("query") or {}
         unresolved.append({"named": work.named, "slug": work.slug, "state": state, "detail": detail,
-                           "title": (record.get("metadata") or {}).get("title") or (query.get("value") if query.get("kind") == "title" else None)})
+                           "title": (record.get("metadata") or {}).get("title") or (query.get("value") if query.get("kind") == "title" else None),
+                           "batch": asked.get("reference:%s" % (work.slug or work.named))})
     return {"path": path, "exists": (project / path).is_file(), "entries": entries, "unresolved": unresolved}
+
+
+def _order_batch_items(project, problems):
+    """The open paper order's batch, by each item's ref: `{ref: {batch, item, mark, default, marks}}`, empty with no order
+    asking one. A reference's row carries its item, so the hand-over form's "drop it" and "keep the claim marked" are the
+    batch's marks (ticket 121), saved through `mark` as the marks view saves them."""
+    from wayline import batches, paper
+    try:
+        opened = paper.open_order(project)
+        identifier = paper.waiting_on(project, opened) if opened else None
+        if not identifier:
+            return {}
+        batch = batches.read_batch(project, identifier)
+    except (batches.BatchError, OSError, ValueError) as failure:
+        problems.append("the paper order's batch: %s" % failure)
+        return {}
+    return {item["ref"]: {"batch": batch["id"], "item": item["id"], "mark": item.get("mark"), "default": item.get("default"),
+                          "marks": list(item.get("marks") or [])} for item in batch["items"]}
 
 
 def _code_repository(project, events, problems):
@@ -415,7 +437,23 @@ def paper_snapshot(project):
     reference gives up at the moment its flag's days run out, with no file moving, so the tag moves each minute and
     References shows it given up within one."""
     import time
-    return dict(section_snapshot(project), minute=int(time.time() // REFERENCES_TICK_S))
+    paper = Path(project) / PAPER_DIR
+    found = dict(section_snapshot(project), minute=int(time.time() // REFERENCES_TICK_S))
+    # The paper's parts, its record, its alternatives, its earlier versions, and each compilation's record (ticket 121),
+    # none of which the ledger's snapshot scans: a choice or a compilation moves only these.
+    found.update(_stamps(paper, "paper/"))
+    found.update(_stamps(paper / "alternatives", "alternatives/"))
+    for directory in ("earlier", "compilations"):
+        try:
+            with os.scandir(paper / directory) as entries:
+                names = sorted(entry.name for entry in entries if entry.is_dir(follow_symlinks=False))
+        except OSError:
+            names = []
+        found[directory] = names
+        if directory == "compilations":
+            for name in names:
+                found.update(_stamps(paper / directory / name, "compilations/%s/" % name))
+    return found
 
 
 def section_snapshot(project):
@@ -446,14 +484,146 @@ def paper_view(project):
     project = Path(project).resolve()
     problems = []
     events = _events(project, problems)
+    record = _paper_record(project, problems)
     return {
         "sections": _section_rows(project, problems),
         "outline": _outline_row(project),
         "references": _references(project, problems),
         "code_repository": _code_repository(project, events, problems),
         "methods": _methods(project),
+        "paper": _paper_parts(project, record),
+        "compilations": _compilation_rows(project, record, problems),
+        "venues": venues(),
+        "order": _open_order(project, problems),
         "problems": problems,
     }
+
+
+# --- Paper: the paper's parts, earlier versions, and the compilations (ticket 121) ----------------------------------
+
+PAPER_DIR = RESEARCH + "/paper"
+PART_TITLES = {"title": "Title", "abstract": "Abstract", "introduction": "Introduction", "results": "Results",
+               "discussion": "Discussion", "methods": "Methods", "supplement": "Supplement", "front": "Front matter"}
+# What a compilation offers to download, each the file or directory under `compilations/<name>/` it is.
+DOWNLOADS = (("pdf", "paper.pdf"), ("docx", "paper.docx"), ("latex", "latex"), ("markdown", "paper.md"))
+
+
+def _paper_record(project, problems):
+    from wayline import paper
+    try:
+        return paper.read_record(project)
+    except (paper.PaperError, OSError, ValueError) as failure:
+        problems.append(str(failure))
+        return None
+
+
+def _paper_parts(project, record):
+    """The paper's version: each part with the version it was last made in, whether the owner changed its file since (an
+    edit, or a choice), and its alternatives, the one the part holds now marked; the earlier versions, newest first."""
+    from wayline import paper
+    if record is None:
+        return None
+    book = Ledger(project)
+    parts = []
+    for part in paper.PARTS:
+        path = "%s/%s.md" % (PAPER_DIR, part)
+        try:
+            text = (project / path).read_text(encoding="utf-8")
+        except OSError:
+            text = None
+        held = record["parts"][part]
+        current = (text or "").strip()
+        parts.append({
+            "part": part, "title": PART_TITLES.get(part, part), "path": path, "exists": text is not None, "version": held["version"],
+            "edited": text is not None and paper._sha(text) != held["sha256"],
+            "alternatives": [{"name": name, "text": _clip(alternative), "path": "%s/%s/%s.md" % (PAPER_DIR, paper.ALTERNATIVES, name),
+                              "current": alternative == current} for name, alternative in paper.alternatives_of(book, record, part)],
+        })
+    return {"version": record["version"], "order": record["order"], "composed": record["composed"], "report": "%s/%s" % (PAPER_DIR, paper.PAPER_MD),
+            "parts": parts, "chosen": [{key: choice.get(key) for key in ("part", "alternative", "at")} for choice in record.get("chosen") or []],
+            "earlier": _earlier(project)}
+
+
+def _earlier(project):
+    """Each frozen version under `research/paper/earlier/v<n>/`, newest first: its build report and its title."""
+    from wayline import paper
+    root = project / PAPER_DIR / paper.EARLIER
+    found = []
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return []
+    for entry in entries:
+        match = re.match(r"^v([1-9][0-9]*)$", entry.name)
+        if not match or not entry.is_dir():
+            continue
+        try:
+            title = (entry / "title.md").read_text(encoding="utf-8")
+        except OSError:
+            title = ""
+        report = entry / paper.PAPER_MD
+        found.append({"version": int(match.group(1)), "title": _clip(title),
+                      "report": report.relative_to(project).as_posix() if report.is_file() else None,
+                      "path": entry.relative_to(project).as_posix()})
+    return sorted(found, key=lambda item: -item["version"])
+
+
+def venues(root=None):
+    """The venues a compilation can be made for: each slug under the harness's `guidelines/` with its display name."""
+    from wayline import HARNESS_ROOT, guidelines
+    shelf = Path(root or HARNESS_ROOT) / guidelines.GUIDELINES_DIR
+    found = []
+    try:
+        entries = sorted(shelf.iterdir())
+    except OSError:
+        return []
+    for entry in entries:
+        try:
+            record = json.loads((entry / guidelines.GUIDELINES_JSON).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        found.append({"venue": entry.name, "display_name": record.get("display_name") or entry.name})
+    return found
+
+
+def _compilation_rows(project, record, problems):
+    """Each compilation: its venue, the version it was made from, its outcome, its four downloads (the LaTeX directory a
+    zip), and the parts chosen since it was made (`made before part X changed`)."""
+    from wayline import compilations
+    try:
+        held = compilations.read_compilations(project)
+    except (OSError, ValueError) as failure:
+        problems.append("the compilations: %s" % failure)
+        return []
+    names = {item["venue"]: item["display_name"] for item in venues()}
+    rows = []
+    for compiled in held:
+        base = "%s/%s/%s" % (PAPER_DIR, compilations.COMPILATIONS, compiled["name"])
+        downloads = {kind: "%s/%s" % (base, name) for kind, name in DOWNLOADS if (project / base / name).exists()}
+        rows.append({
+            "name": compiled["name"], "venue": compiled.get("venue"),
+            "display_name": names.get(compiled.get("venue"), compiled.get("venue")) if compiled.get("venue") else "plain, no venue",
+            "paper_version": compiled.get("paper_version"), "compiled": compiled.get("compiled"), "outcome": compiled.get("outcome"),
+            "older": bool(record) and compiled.get("paper_version") != record["version"],
+            "made_before": compilations.made_before(record, compiled), "downloads": downloads,
+            "problems": {output: item.get("problem") for output, item in (compiled.get("outputs") or {}).items() if item.get("problem")},
+            "checks_failed": [check.get("check") for check in compiled.get("checks") or [] if check.get("level") == "fail"],
+            "record": "%s/%s" % (base, compilations.RECORD_JSON),
+        })
+    return rows
+
+
+def _open_order(project, problems):
+    """The paper order open now, `{order, batch, venue}`, or None: while one is open, a new order and a choice wait."""
+    from wayline import paper
+    try:
+        opened = paper.open_order(project)
+    except (OSError, ValueError) as failure:
+        problems.append("the paper order: %s" % failure)
+        return None
+    if opened is None:
+        return None
+    return {"order": opened.get("order"), "batch": paper.waiting_on(project, opened), "venue": opened.get("venue")}
 
 
 # --- Inherited: what a start midway brought, and what became of it ------------------------------------------------

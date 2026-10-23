@@ -1743,9 +1743,9 @@ function say(text, failed) {
 
 // Take one action, say what came of it, and poll the views again at once instead of at their next tick, whether it
 // was taken or refused: a refused change shows the value that stands.
-async function perform(name, body, said, project) {
+async function perform(name, body, said, project, headers) {
   try {
-    const reply = await act(name, body, null, project);
+    const reply = await act(name, body, headers || null, project);
     say(said ? said(reply) : `${name}: done`);
     return reply;
   } catch (failure) {
@@ -1771,7 +1771,7 @@ function refreshViews() {
 // --- the controls (ticket 35) ------------------------------------------------------------------
 
 // A control the owner changed and has not set yet keeps what they chose while the views poll.
-const dirty = { autonomy: false, pacing: false, model_fallback: false, ladder_changes: false };
+const dirty = { autonomy: false, pacing: false, model_fallback: false, ladder_changes: false, plotting: false };
 
 // The line at the top of the controls panel: what it is doing, or what went wrong, before the
 // first reading of the decisions view fills the controls themselves.
@@ -1816,12 +1816,22 @@ function renderControls(controls) {
   }
   document.getElementById('ladder-changes-current').textContent = controls.ladder_changes
     ? `now ${controls.ladder_changes_stated ? controls.ladder_changes : 'ask (unset)'}: whether an autonomous run may change the rung ladder on its own` : '';
+  if (!dirty.plotting) {
+    replace(document.getElementById('plotting-select'), (controls.plotting_levels || []).map((level) => {
+      const option = el('option', { value: level.library, text: level.label });
+      option.selected = level.library === controls.plotting;
+      return option;
+    }));
+  }
+  const drawnIn = (controls.plotting_levels || []).find((level) => level.library === controls.plotting);
+  document.getElementById('plotting-current').textContent = drawnIn
+    ? `now ${drawnIn.label}: each result's next drawing is drawn in it; a library not installed yet is installed first` : '';
   document.getElementById('autonomy-current').textContent = controls.autonomy
     ? `now ${controls.autonomy}; raised at any time, lowered only while no conductor runs` : '';
   document.getElementById('active-state').textContent = controls.active ? 'this is the active project' : 'another project is active';
   document.getElementById('pause-state').textContent = controls.paused_by_owner
     ? 'paused by the owner: nothing that needs a model launches' : 'not paused by the owner';
-  for (const id of ['autonomy-set', 'pacing-set', 'model-fallback-set', 'ladder-changes-set', 'pause-button', 'resume-button']) document.getElementById(id).disabled = !TOKEN;
+  for (const id of ['autonomy-set', 'pacing-set', 'model-fallback-set', 'ladder-changes-set', 'plotting-set', 'pause-button', 'resume-button']) document.getElementById(id).disabled = !TOKEN;
   document.getElementById('switch-button').disabled = !TOKEN || Boolean(controls.active);
 }
 
@@ -1850,6 +1860,17 @@ function wireControls() {
     dirty.ladder_changes = false;
     await perform('ladder_changes', { ladder_changes: consent },
       (done) => (done.changed ? `ladder consent set from ${done.from || 'ask (unset)'} to ${done.to}` : `the ladder consent is already ${done.to}`));
+  });
+  // The plotting library (ticket 121): `wayline switch --plotting`, which installs a library's tools first, so a long
+  // install answers 202 and the controls show the library once it is set.
+  document.getElementById('plotting-select').addEventListener('change', () => { dirty.plotting = true; });
+  document.getElementById('plotting-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const library = document.getElementById('plotting-select').value;
+    dirty.plotting = false;
+    await perform('plotting', { library }, (done) => (done.started === 'plotting'
+      ? `installing what ${library} needs; plotting is set once it is installed`
+      : done.changed ? `plotting set from ${done.from} to ${done.to}` : `plotting is already ${done.to}`));
   });
   document.getElementById('model-fallback-form').addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -2656,11 +2677,11 @@ function problemsList(problems) {
   return (problems || []).length ? [el('ul', { class: 'problems' }, problems.map((problem) => el('li', { text: problem })))] : [];
 }
 
-// A file code renders, as a row that opens it: a section or the outline.
-function renderedRow(project, file, lines) {
+// A file code renders, as a row that opens it: a section or the outline; `acts` are its buttons beyond edit.
+function renderedRow(project, file, lines, acts) {
   return itemRow(project, {
     id: file.id, label: file.title, link: file.exists,
-    acts: file.editable && file.exists ? [editButton(project, file)] : [],
+    acts: [...(file.editable && file.exists ? [editButton(project, file)] : []), ...(acts || [])],
     more: [more(file.exists ? `rendered ${file.rendered || 'by code'}` : 'not rendered yet'), ...(lines || [])],
   });
 }
@@ -2673,15 +2694,220 @@ function passagesLine(section) {
 
 function renderPaper(view, project) {
   state.paperShown = { view, project };  // what a reason's edit or cancel redraws from, with no request
-  const files = (view.sections || []).map((section) => renderedRow(project, section, [passagesLine(section)]));
+  clearCards(project);
+  const files = (view.sections || []).map((section) => renderedRow(project, section, [passagesLine(section)],
+    section.consolidates ? [cardButton(project, 'paper-sections-card', 'consolidate', { section: section.id }, 'consolidate')] : []));
   if (view.outline) files.push(renderedRow(project, view.outline, [more('the proposed shape of the paper, built by code')]));
   replace(document.getElementById('paper-sections-body'), [
     files.length ? el('ul', { class: 'rows' }, files) : emptyState('no section is rendered yet'),
     ...problemsList(view.problems),
   ]);
   renderReferences(view.references || {}, project);
-  renderRepository(view.code_repository || {});
+  renderRepository(view.code_repository || {}, project);
   renderMethods(view.methods || {}, project);
+  renderOrder(view, project);
+  renderParts(view.paper, project);
+  renderCompilations(view, project);
+}
+
+// --- the cards a button opens (ticket 121) ------------------------------------------------------------------
+//
+// Order the paper, ask for a consolidation, make the repository public, and compile for another venue each open the
+// card the chat shows for the same action, read from `cards/<action>`, built by code with no model and no write. It
+// opens in its section's card place, which no poll redraws, so a card being read stays put. Confirm posts the card's
+// own `args` to `actions/<action>`, the action the chat's Confirm runs; Not now takes the card away and sends nothing.
+
+const CARD_PLACES = ['paper-sections-card', 'paper-repository-card', 'paper-order-card', 'paper-compilations-card'];
+
+// A card left open for another project goes when this one is drawn.
+function clearCards(project) {
+  for (const id of CARD_PLACES) {
+    const place = document.getElementById(id);
+    if (place && place.dataset.project && place.dataset.project !== project) {
+      replace(place, []);
+      delete place.dataset.project;
+    }
+  }
+}
+
+// What a card says, as the chat's card says it: its name, what will happen, and its cost.
+function cardLines(action, what, cost) {
+  return [
+    el('p', { class: 'chat-card-title', text: CARD_LABELS[action] || action }),
+    el('p', { class: 'card-what', text: what }),
+    el('p', { class: 'note', text: `Cost: ${cost}` }),
+  ];
+}
+
+function cardButton(project, place, action, query, text, disabled) {
+  const button = el('button', { type: 'button', class: 'action', text, title: `${CARD_LABELS[action] || action}: its card first` });
+  button.disabled = !TOKEN || Boolean(disabled);
+  button.addEventListener('click', () => openCard(project, place, action, query));
+  return button;
+}
+
+async function openCard(project, placeId, action, query) {
+  const place = document.getElementById(placeId);
+  place.dataset.project = project;
+  replace(place, [loadingState('reading the card')]);
+  const asked = new URLSearchParams(Object.entries(query || {}).filter(([, value]) => value));
+  try {
+    const headers = TOKEN ? { 'X-Wayline-Token': TOKEN } : {};
+    const response = await fetch(`/api/projects/${encodeURIComponent(project)}/cards/${action}${asked.size ? `?${asked}` : ''}`,
+      { cache: 'no-store', headers });
+    const text = await response.text();
+    if (!response.ok) throw new Error(text.trim() || `${response.status} ${response.statusText}`);
+    replace(place, [buttonCard(project, place, JSON.parse(text))]);
+  } catch (failure) {
+    replace(place, [el('p', { class: 'note problems', text: `${CARD_LABELS[action] || action}: ${failure.message || failure}` })]);
+  }
+}
+
+function buttonCard(project, place, card) {
+  const lines = cardLines(card.action, card.what, card.cost);
+  const confirm = el('button', { type: 'button', class: 'action primary', text: 'Confirm' });
+  const later = el('button', { type: 'button', class: 'action', text: 'Not now' });
+  later.addEventListener('click', () => replace(place, []));
+  confirm.addEventListener('click', async () => {
+    confirm.disabled = true;
+    later.disabled = true;
+    try {
+      const reply = await act(card.action, card.args, null, project);
+      replace(place, [el('p', { class: 'note', text: `${CARD_LABELS[card.action] || card.action}: ${confirmedLine(card.action, reply)}` })]);
+    } catch (failure) {
+      lines.push(el('p', { class: 'note problems', text: `Confirm was refused: ${failure.message || failure}` }));
+      confirm.disabled = false;
+      later.disabled = false;
+      replace(place, [el('div', { class: 'chat-card', role: 'group', 'aria-label': 'confirm or set aside' }, [...lines, acts])]);
+    } finally {
+      refreshViews();
+    }
+  });
+  const acts = el('div', { class: 'chat-card-acts acts' }, [confirm, later]);
+  return el('div', { class: 'chat-card', role: 'group', 'aria-label': 'confirm or set aside' }, [...lines, acts]);
+}
+
+function confirmedLine(action, reply) {
+  if (reply.started === action) return 'started; the view shows it once it is done';
+  if (action === 'paper') {
+    return `paper order ${reply.order} made${reply.venue ? `, compiled for ${reply.venue} too` : ''}${reply.batch ? `; batch ${reply.batch} waits on your marks` : ''}`;
+  }
+  if (action === 'compile') return `compiled ${reply.name} from version ${reply.paper_version}: ${reply.outcome}`;
+  if (action === 'consolidate') return `done: ${(reply.replaced || []).join(', ')} replaced by ${(reply.written || []).join(', ')}`;
+  return 'done';
+}
+
+// --- the paper order, the paper's parts, and the compilations (ticket 121) ----------------------------------
+
+function venueSelect(id, venues, none) {
+  return el('select', { id, 'aria-label': none ? 'the venue the order also compiles for' : 'the venue to compile for' }, [
+    ...(none ? [el('option', { value: '', text: none })] : []),
+    ...(venues || []).map((venue) => el('option', { value: venue.venue, text: venue.display_name })),
+  ]);
+}
+
+// A select keeps what the owner picked across the poll that redraws it.
+function keepPick(select, key) {
+  if (state[key] !== undefined && [...select.options].some((option) => option.value === state[key])) select.value = state[key];
+  select.addEventListener('change', () => { state[key] = select.value; });
+  return select;
+}
+
+function renderOrder(view, project) {
+  const opened = view.order;
+  const parts = [];
+  if (opened) {
+    parts.push(el('p', {}, [document.createTextNode(`Paper order ${opened.order} is open${opened.venue ? `, for ${opened.venue}` : ''}: `),
+      opened.batch ? itemLink(project, opened.batch, `its batch ${opened.batch} waits on your marks`)
+        : document.createTextNode('the run rests, draws the changed results, and composes the paper')]));
+  } else {
+    parts.push(el('p', { class: 'note', text: view.paper
+      ? `Version ${view.paper.version} is composed. A new order recomposes only the parts whose inputs changed.`
+      : 'Nothing on the card blocks the order; it composes the paper from the outline and the sections.' }));
+  }
+  const venue = keepPick(venueSelect('order-venue', view.venues, 'no venue: the plain compilation only'), 'orderVenue');
+  const order = el('button', { type: 'button', class: 'action primary', text: 'order the paper' });
+  order.disabled = !TOKEN || Boolean(opened);
+  order.addEventListener('click', () => openCard(project, 'paper-order-card', 'paper', { venue: venue.value }));
+  parts.push(el('p', { class: 'inline acts' }, [venue, order]));
+  replace(document.getElementById('paper-order-body'), parts);
+}
+
+function renderParts(paper, project) {
+  const body = document.getElementById('paper-parts-body');
+  if (!paper) {
+    replace(body, [emptyState('no paper yet: the paper order composes it, each part in its own file under research/paper/')]);
+    return;
+  }
+  const rows = (paper.parts || []).map((part) => itemRow(project, {
+    id: part.part, label: part.title, link: false, insert: false,
+    title: part.exists ? '' : 'not written',
+    status: part.edited ? 'changed since composed' : null,
+    acts: part.exists ? [viewButton(part.path, part.title)] : [],
+    more: [more(`version ${part.version}${part.edited ? ': its file changed since code wrote it (an edit or a choice), which the next order keeps unless its inputs change' : ''}`),
+      ...(part.alternatives.length ? [el('ul', { class: 'rows nested' }, part.alternatives.map((item) => alternativeRow(project, item)))] : [])],
+  }));
+  replace(body, [
+    el('p', { class: 'note' }, [document.createTextNode(`Version ${paper.version}, composed at order ${paper.order} on ${paper.composed}. `),
+      viewButton(paper.report, 'PAPER.md', 'open PAPER.md')]),
+    el('ul', { class: 'rows' }, rows),
+    subhead('earlier versions', (paper.earlier || []).length),
+    rowsOrNone(paper.earlier || [], (earlier) => itemRow(project, {
+      id: `v${earlier.version}`, link: false, insert: false, title: earlier.title,
+      acts: earlier.report ? [viewButton(earlier.report, `version ${earlier.version}`, 'open its PAPER.md')] : [],
+      more: [more(`frozen under ${earlier.path}/`)],
+    }), 'none: each order freezes the version before it under research/paper/earlier/'),
+  ]);
+}
+
+function viewButton(path, title, text) {
+  const button = el('button', { type: 'button', class: 'action', text: text || 'view' });
+  button.addEventListener('click', () => openViewer(path, { title }));
+  return button;
+}
+
+// An alternative: its text, the one the part holds marked, and choose on the others. Choosing is free; it marks each
+// compilation made before the part changed until that venue is compiled again or the next order.
+function alternativeRow(project, item) {
+  const acts = [];
+  if (!item.current) {
+    const choose = el('button', { type: 'button', class: 'action', text: 'choose', title: `put ${item.name} in its part; free` });
+    choose.disabled = !TOKEN;
+    choose.addEventListener('click', () => perform('choose', { alternative: item.name },
+      (done) => (done.changed ? `${done.alternative} chosen${done.kept ? `; the text before is kept as ${done.kept}` : ''}` : `${done.alternative} is the part already`), project));
+    acts.push(el('span', { class: 'acts' }, [choose]));
+  }
+  return itemRow(project, { id: item.name, link: false, insert: false, title: item.text, status: item.current ? 'in the paper' : null, acts });
+}
+
+const DOWNLOADS = [['pdf', 'PDF'], ['docx', '.docx'], ['latex', 'LaTeX .zip'], ['markdown', 'Markdown']];
+
+function compilationRow(project, item) {
+  return itemRow(project, {
+    id: item.name, label: item.display_name, link: false, insert: false,
+    title: `from version ${item.paper_version}, ${item.compiled}`,
+    status: item.outcome,
+    more: [
+      el('p', { class: 'row-more downloads' }, DOWNLOADS.filter(([kind]) => item.downloads[kind]).map(([kind, label]) =>
+        el('a', { class: 'action', href: downloadUrl(item.downloads[kind]), text: label, download: '' }))),
+      ...(item.made_before.length ? [el('p', { class: 'row-more stale', text: `made before ${item.made_before.join(', ')} changed: compile it again, or order the paper` })] : []),
+      ...(item.older ? [more(`made from version ${item.paper_version}, before the version now composed`)] : []),
+      ...Object.entries(item.problems || {}).map(([output, problem]) => el('p', { class: 'row-more problems', text: `${output} not made: ${problem}` })),
+      ...(item.checks_failed.length ? [more(`the venue's checks that failed: ${item.checks_failed.join(', ')}`)] : []),
+    ],
+  });
+}
+
+function renderCompilations(view, project) {
+  const compiled = view.compilations || [];
+  const venue = keepPick(venueSelect('compile-venue', view.venues), 'compileVenue');
+  const compile = el('button', { type: 'button', class: 'action', text: 'compile for this venue' });
+  compile.disabled = !TOKEN || !view.paper || Boolean(view.order);
+  compile.addEventListener('click', () => openCard(project, 'paper-compilations-card', 'compile', { venue: venue.value }));
+  replace(document.getElementById('paper-compilations-body'), [
+    rowsOrNone(compiled, (item) => compilationRow(project, item), 'none yet: every paper order compiles the paper plainly, and for the venue it names'),
+    el('p', { class: 'inline acts' }, [venue, compile]),
+  ]);
 }
 
 function authorsOf(entry) {
@@ -2704,9 +2930,98 @@ function renderReferences(references, project) {
     subhead('not yet resolved', unresolved.length),
     rowsOrNone(unresolved, (row) => itemRow(project, {
       id: row.slug || row.named, link: false, insert: false, title: row.slug ? row.title || row.named : '', status: row.state,
-      more: [more(row.detail)],
+      acts: row.slug ? [handOverButton(project, row)] : [],
+      more: [more(row.detail), ...(row.batch && row.batch.mark ? [more(`the paper order's batch ${row.batch.batch}: ${row.batch.mark}`)] : []),
+        ...handOverForm(project, row)],
     }), 'nothing: every cited work resolved'),
   ]);
+}
+
+// --- the hand-over of a reference (ticket 121) ------------------------------------------------------------------
+//
+// A DOI or an exact title goes back to the scout and a PDF becomes the reference's source, through `wayline
+// reference`'s function (the `reference` action). "Drop it" and "keep the claim marked 'to be resolved'" are the paper
+// order's batch while it asks about the reference (the `mark` action); with no order asking, "keep the claim" is
+// `wayline reference <slug> "leave it"`, and "drop it" waits for the order, which asks. One form is open at a time, and
+// a poll that redraws References keeps what was typed in it (`state.handOver`).
+
+function handOverButton(project, row) {
+  const open = state.handOver && state.handOver.project === project && state.handOver.slug === row.slug;
+  const button = el('button', { type: 'button', class: 'action', text: open ? 'close' : 'hand over' });
+  button.disabled = !TOKEN;
+  button.addEventListener('click', () => {
+    state.handOver = open ? null : { project, slug: row.slug, text: '' };
+    loadReferencesAgain();
+  });
+  return el('span', { class: 'acts' }, [button]);
+}
+
+function loadReferencesAgain() {
+  const shown = state.paperShown;
+  if (shown && shown.project === state.project) renderReferences(shown.view.references || {}, shown.project);
+}
+
+async function handOver(project, row, body, headers, said) {
+  const reply = await perform('reference', body, said, project, headers);
+  if (reply) state.handOver = null;
+  return reply;
+}
+
+function handOverForm(project, row) {
+  const draft = state.handOver;
+  if (!draft || draft.project !== project || draft.slug !== row.slug) return [];
+  const field = el('input', { type: 'text', 'aria-label': `a DOI or the exact title of ${row.slug}`, placeholder: 'a DOI or the exact title' });
+  field.value = draft.text;
+  field.addEventListener('input', () => { draft.text = field.value; });
+  const send = el('button', { type: 'submit', class: 'action primary', text: 'to the scout' });
+  const form = el('form', { class: 'inline hand-over' }, [field, send]);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (field.value.trim()) {
+      handOver(project, row, { slug: row.slug, answer: field.value.trim() },
+        null, (done) => `${done.slug}: handed over as a ${done.answer}, ${done.dossier.existence}`);
+    }
+  });
+  const pdf = el('input', { type: 'file', accept: 'application/pdf,.pdf', 'aria-label': `the PDF of ${row.slug}` });
+  pdf.addEventListener('change', () => {
+    const file = pdf.files && pdf.files[0];
+    if (file) sendPdf(project, row, file);
+  });
+  const zone = el('div', { class: 'drop hand-over-drop' }, [el('p', {}, [document.createTextNode('or drop its PDF here, or choose it: '), pdf])]);
+  for (const type of ['dragenter', 'dragover']) zone.addEventListener(type, (event) => { event.preventDefault(); zone.classList.add('over'); });
+  for (const type of ['dragleave', 'drop']) zone.addEventListener(type, () => zone.classList.remove('over'));
+  zone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files && event.dataTransfer.files[0];
+    if (file) sendPdf(project, row, file);
+  });
+  const asked = row.batch;
+  const keep = el('button', { type: 'button', class: 'action', text: "keep the claim marked 'to be resolved'" });
+  keep.addEventListener('click', () => (asked
+    ? markReference(project, row, 'to be resolved')
+    : handOver(project, row, { slug: row.slug, answer: 'leave it' }, null, (done) => `${done.slug}: its claim is kept, marked "to be resolved"`)));
+  const drop = el('button', { type: 'button', class: 'action', text: 'drop it' });
+  drop.disabled = !asked;
+  drop.title = asked ? `the answer to batch ${asked.batch}` : 'asked at the paper order, whose batch asks about each unresolved reference';
+  drop.addEventListener('click', () => markReference(project, row, 'drop'));
+  return [el('div', { class: 'hand-over-form acts' }, [
+    form, zone, el('p', { class: 'inline' }, [drop, keep]),
+    ...(asked ? [] : [el('p', { class: 'note', text: 'drop it is answered at the paper order, whose batch asks about each unresolved reference' })]),
+  ])];
+}
+
+async function sendPdf(project, row, file) {
+  if (!/\.pdf$/i.test(file.name)) {
+    say(`${file.name}: a reference's source is its PDF`, true);
+    return;
+  }
+  await handOver(project, row, file, { 'Content-Type': 'application/pdf', 'X-Wayline-Filename': encodeURIComponent(file.name), 'X-Wayline-Reference': row.slug },
+    (done) => `${done.slug}: its PDF kept as the source, ${done.dossier.existence}`);
+}
+
+async function markReference(project, row, mark) {
+  const reply = await perform('mark', { batch: row.batch.batch, item: row.batch.item, mark }, () => `${row.slug}: ${mark}, in batch ${row.batch.batch}`, project);
+  if (reply) state.handOver = null;
 }
 
 // A remote's link, only when it is a web address: anything else is shown as words, never followed.
@@ -2716,7 +3031,7 @@ function remoteLink(repository) {
   return el('a', { href: repository.url, target: '_blank', rel: 'noopener noreferrer', text: name });
 }
 
-function renderRepository(repository) {
+function renderRepository(repository, project) {
   const body = document.getElementById('paper-repository-body');
   if (!repository.settled) {
     replace(body, [emptyState('no code repository yet: one setup question settles its shape, its remote, its visibility, and its license')]);
@@ -2731,6 +3046,9 @@ function renderRepository(repository) {
       ['license', repository.license],
       ['last push', pushed ? `${String(pushed.commit || '').slice(0, 12)} at ${pushed.ts}` : 'nothing pushed yet', pushed ? pushed.commit : undefined],
     ]),
+    // Making it public is on the irreversible list: the owner's word on its card (ticket 121), never a session's.
+    ...(repository.visibility === 'public' ? [] : [el('p', { class: 'inline acts' }, [
+      cardButton(project, 'paper-repository-card', 'public', {}, 'make it public')])]),
   ]);
 }
 
@@ -3540,6 +3858,7 @@ const CARD_LABELS = {
   'consolidate': 'Consolidate a section',
   'paper': 'Order the paper',
   'public': 'Make the code repository public',
+  'compile': 'Compile for another venue',
 };
 // The item ids the server takes with a message, as an item link names them.
 const CHAT_ITEM = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,79}$/;
@@ -3692,11 +4011,7 @@ function chatMessage(project, message) {
 // A card: what will happen and what it costs, with Confirm and Not now while it is open, and how it was settled after.
 function chatCard(project, message) {
   const card = message.card;
-  const lines = [
-    el('p', { class: 'chat-card-title', text: CARD_LABELS[card.action] || card.action }),
-    el('p', { text: card.what }),
-    el('p', { class: 'note', text: `Cost: ${card.cost}` }),
-  ];
+  const lines = cardLines(card.action, card.what, card.cost);
   if (card.state === 'open') {
     const confirm = el('button', { type: 'button', class: 'action primary', text: 'Confirm' });
     const later = el('button', { type: 'button', class: 'action', text: 'Not now' });

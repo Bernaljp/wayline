@@ -532,6 +532,10 @@ class DecisionsViewTest(BranchCase):
                                             "stop_at": 0.9, "cheap_at": 0.8, "model_fallback": "ask", "model_fallback_stated": False,
                                             "model_fallback_levels": ["auto", "ask", "wait"], "ladder_changes": "ask",
                                             "ladder_changes_stated": False, "ladder_changes_levels": ["auto", "ask"],
+                                            "plotting": "matplotlib", "plotting_levels": [
+                                                {"library": "matplotlib", "label": "Python with matplotlib and seaborn"},
+                                                {"library": "altair", "label": "Python with Altair"},
+                                                {"library": "ggplot2", "label": "R with ggplot2"}],
                                             "paused_by_owner": False, "active": True})
         self.assertEqual(view["problems"], [])
 

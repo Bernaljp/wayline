@@ -118,7 +118,7 @@ class SectionEditTest(SectionEditCase):
 
 class EditRefusalTest(SectionEditCase):
     def test_the_edit_actions_are_the_only_ones_added_each_refused_without_the_token(self):
-        self.assertEqual(ACTIONS[19:], ("edit", "reason"))
+        self.assertEqual(ACTIONS[19:21], ("edit", "reason"))
         opened = self.opened("introduction")
         before = self.text("introduction")
         for name, body in (("edit", {"target": "introduction", "text": "x\n", "stamp": opened["stamp"]}),

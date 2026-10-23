@@ -60,7 +60,7 @@ from wayline.tools import Tools, ToolOutput, ToolsError, failure_line, run_recor
 __all__ = [
     "CompilationError", "COMPILATIONS", "PLAIN", "RECORD_JSON", "SCHEMA", "FITTING_SCHEMA", "FILTER", "MARK", "FITTING_COST",
     "compile_paper", "after_order", "last_retry", "card", "card_text", "read_compilation", "fitting_problems", "tag_text",
-    "plan_citations", "recording_runner", "recorded_runner", "compile_command",
+    "plan_citations", "recording_runner", "recorded_runner", "compile_command", "read_compilations", "made_before",
 ]
 
 COMPILATIONS = "compilations"            # research/paper/compilations/<name>/
@@ -152,6 +152,37 @@ def read_compilation(project_or_ledger, name):
         return book.read_json("%s/%s" % (_compilation_dir(name), RECORD_JSON))
     except FileNotFoundError:
         return None
+
+
+def read_compilations(project_or_ledger):
+    """Every compilation's record under `research/paper/compilations/`, `plain` first and then the venues by name; one whose
+    record is missing or unreadable is left out."""
+    book = ledger_for(project_or_ledger)
+    root = book.path("%s/%s" % (paper.PAPER_DIR, COMPILATIONS))
+    try:
+        names = sorted(path.name for path in root.iterdir() if path.is_dir() and not path.name.startswith("."))
+    except OSError:
+        return []
+    found = []
+    for name in sorted(names, key=lambda name: (name != PLAIN, name)):
+        try:
+            record = read_compilation(book, name)
+        except (OSError, ValueError):
+            continue
+        if isinstance(record, dict) and record.get("name") == name:
+            found.append(record)
+    return found
+
+
+def made_before(record, compiled):
+    """The parts a choice of an alternative changed since `compiled`, one compilation's record, was made: each part chosen
+    while the compilation still carried the `compiled` stamp the choice recorded for it (ticket 121). `record` is the
+    paper's version record; the next order writes one without choices, so the mark lasts until then or a new compilation."""
+    parts = []
+    for choice in (record or {}).get("chosen") or []:
+        if (choice.get("before") or {}).get(compiled.get("name")) == compiled.get("compiled") and choice["part"] not in parts:
+            parts.append(choice["part"])
+    return parts
 
 
 def _venue(harness_root, venue):

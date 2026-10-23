@@ -17,7 +17,8 @@ detected, and without one the notifier stops at `notify-send`.
 the owner as it arises; under `checkpoints`, a decision ticket notifies as it opens and every other notice waits
 for the next conversation or the end notice; under `autonomous`, only the end notice of a run and the login's
 expiry notify, and, under every autonomy, the notice of a project stuck until the owner acts (`STUCK`), which no
-end notice would follow. `holds` is that rule, which the tick applies too; a notice it holds is neither sent nor journaled,
+end notice would follow. A paper order's end (`PAPER_ENDED`, ticket 121) notifies under `interactive` and
+`checkpoints` alike, and is held under `autonomous`. `holds` is that rule, which the tick applies too; a notice it holds is neither sent nor journaled,
 and the end notice's "M waiting on you" carries it.
 
 `WAYLINE_NOTIFY=none` keeps every channel off: both `notified` lines are journaled as always, the
@@ -35,7 +36,8 @@ from pathlib import Path
 from wayline.ledger import NOTIFIED, Ledger
 from wayline.project import HARNESS_JSON, is_project, read_active
 
-__all__ = ["notify", "holds", "held_back", "END_NOTICES", "notify_send_argv", "hermes_argv", "NOTIFY_SEND", "HERMES", "NO_CHANNEL"]
+__all__ = ["notify", "holds", "held_back", "END_NOTICES", "PAPER_ENDED", "notify_send_argv", "hermes_argv", "NOTIFY_SEND", "HERMES",
+           "NO_CHANNEL"]
 
 _log = logging.getLogger("wayline.notify")
 
@@ -59,6 +61,10 @@ LOGIN_ORIGIN = "tick: the login"  # the origin of the tick's login tickets (`tic
 # under every autonomy as the login's expiry does: the tick could not relaunch the conductor (`tick.RELAUNCH_REFUSED`),
 # and the code repository refused a push the conductor will not try again (`conductor.CODE_PUSH_REJECTED`).
 STUCK = ("relaunch_refused", "code_push_rejected")
+# The notice of a paper order's end, composed or failed (ticket 121): it reaches the owner outside `autonomous`, under
+# `checkpoints` as well, since the owner who ordered the paper waits on it; under `autonomous` the run's end notice
+# carries it.
+PAPER_ENDED = "paper_order_ended"
 
 
 def holds(event, autonomy, setup_ended, login=False):
@@ -69,6 +75,8 @@ def holds(event, autonomy, setup_ended, login=False):
     """
     if not setup_ended or event in END_NOTICES or event in STUCK:
         return False
+    if event == PAPER_ENDED:
+        return autonomy == "autonomous"
     if autonomy == "autonomous":
         return not (event == DECISION_OPENED and login)
     if autonomy == "checkpoints":

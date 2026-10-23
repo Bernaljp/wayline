@@ -95,6 +95,7 @@
     <div id="paper-sections-body" class="panel">
       <p class="state loading">reading the sections</p>
     </div>
+    <div id="paper-sections-card" class="card-place" aria-live="polite"></div>
   </section>
   <section id="paper-references" aria-labelledby="paper-references-heading">
     <div class="view-head"><h2 id="paper-references-heading">References</h2></div>
@@ -107,6 +108,7 @@
     <div id="paper-repository-body" class="panel">
       <p class="state loading">reading the code repository</p>
     </div>
+    <div id="paper-repository-card" class="card-place" aria-live="polite"></div>
   </section>
   <section id="paper-methods" aria-labelledby="paper-methods-heading">
     <div class="view-head"><h2 id="paper-methods-heading">Methods</h2><p class="note">What the methods inventory generated at the last render.</p></div>
@@ -114,12 +116,26 @@
       <p class="state loading">reading Methods</p>
     </div>
   </section>
-  <!-- The paper order's card (ticket 121) takes this place. -->
+  <!-- Ticket 121: the buttons open the cards the chat shows, each in its section's card place, which no poll redraws. -->
   <section id="paper-order" aria-labelledby="paper-order-heading">
-    <div class="view-head"><h2 id="paper-order-heading">Paper order</h2></div>
+    <div class="view-head"><h2 id="paper-order-heading">Paper order</h2><p class="note">Until the paper order the project holds only its sections and reports.</p></div>
     <div id="paper-order-body" class="panel">
-      <p class="state">Until the paper order the project holds only its sections and reports. The order's card comes here.</p>
+      <p class="state loading">reading the paper order</p>
     </div>
+    <div id="paper-order-card" class="card-place" aria-live="polite"></div>
+  </section>
+  <section id="paper-parts" aria-labelledby="paper-parts-heading">
+    <div class="view-head"><h2 id="paper-parts-heading">The paper</h2><p class="note">Each part with its version; choosing an alternative is free.</p></div>
+    <div id="paper-parts-body" class="panel">
+      <p class="state loading">reading the paper</p>
+    </div>
+  </section>
+  <section id="paper-compilations" aria-labelledby="paper-compilations-heading">
+    <div class="view-head"><h2 id="paper-compilations-heading">Compilations</h2></div>
+    <div id="paper-compilations-body" class="panel">
+      <p class="state loading">reading the compilations</p>
+    </div>
+    <div id="paper-compilations-card" class="card-place" aria-live="polite"></div>
   </section>
   </div>
 
@@ -225,6 +241,14 @@
           <button type="submit" id="ladder-changes-set" class="action">set ladder consent</button>
         </form>
         <p id="ladder-changes-current" class="note"></p>
+      </div>
+      <div class="control">
+        <form id="plotting-form" class="inline">
+          <label for="plotting-select">plotting library</label>
+          <select id="plotting-select"></select>
+          <button type="submit" id="plotting-set" class="action">set plotting</button>
+        </form>
+        <p id="plotting-current" class="note"></p>
       </div>
       <div class="control">
         <p class="inline">

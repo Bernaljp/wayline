@@ -70,6 +70,22 @@
     "reworded": {"type": "array", "items": {"type": "string", "pattern": "^P[1-9][0-9]*$"}, "description": "the owner's passages the paper does not carry word for word"},
     "kept_edits": {"type": "array", "items": {"type": "string"}, "description": "the parts whose owner's edit was kept"},
     "gated": {"type": "boolean", "description": "false until a build's gates judged this version"},
+    "chosen": {
+      "type": "array",
+      "description": "the alternatives the owner chose since this version was composed (ticket 121, `wayline paper choose`), in order; `before` holds each compilation's `compiled` stamp at the choice, so a compilation still carrying that stamp was made before the part changed. The next order writes a record without it.",
+      "items": {
+        "type": "object",
+        "required": ["part", "alternative", "at", "before"],
+        "additionalProperties": false,
+        "properties": {
+          "part": {"type": "string", "pattern": "^[a-z]+$"},
+          "alternative": {"type": "string", "pattern": "^[a-z]+-[1-9][0-9]*$"},
+          "at": {"type": "string"},
+          "kept": {"type": ["string", "null"], "description": "the alternative the replaced text was kept as, when no alternative held it"},
+          "before": {"type": "object", "additionalProperties": {"type": "string"}}
+        }
+      }
+    },
     "usage": {"type": ["object", "null"], "description": "the writer session's token usage, its turns, and its duration"}
   },
   "$defs": {
