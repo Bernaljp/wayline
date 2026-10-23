@@ -84,6 +84,29 @@ JOB_STATUS_AFTER = {
 }
 
 
+# The `paper_order` actions that close an order (decision 17; tickets 115 and 117): its builds passed or ran out, or no
+# paper could be composed. `composed` and `gated` leave it open, since an order lasts through its builds.
+PAPER_CLOSES = ("passed", "not_passed", "failed")
+
+
+def open_paper_order(payloads):
+    """The paper order open after these `paper_order` payloads, in journal order, or None.
+
+    `ordered` opens one; the owner's `chosen` `more` after a paper not passed reopens it, as its `ordered` payload with the
+    choice's `run`; `passed`, `not_passed`, and `failed` close it. The payload returned is the order's `ordered` one.
+    """
+    made, found = {}, None
+    for payload in payloads:
+        action, number = payload.get("action"), payload.get("order")
+        if action == "ordered":
+            made[number] = found = dict(payload)
+        elif action == "chosen" and payload.get("choice") == "more" and number in made and found is None:
+            found = dict(made[number], run=payload.get("run"), reopened=True)
+        elif found is not None and number == found.get("order") and action in PAPER_CLOSES:
+            found = None
+    return found
+
+
 def _int(value):
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
@@ -347,6 +370,8 @@ class View:
     # The paper order that is open (decision 17; ticket 115): the `paper_order` payload that made it, until the one that
     # composed its paper or failed it. While it is open the run rests: nothing new launches, and the paper is composed.
     paper_order: Optional[dict] = None
+    # Every `paper_order` payload in journal order, which `open_paper_order` reads (ticket 117).
+    _paper_orders: list = field(default_factory=list, repr=False)
 
     def apply(self, event):
         """Fold one journal record into the view; returns the view."""
@@ -444,10 +469,8 @@ class View:
         elif name == CODE_PUSHED and payload.get("commit"):
             self.code_pushed = {"commit": payload["commit"], "main": payload.get("main")}
         elif name == PAPER_ORDER:
-            if payload.get("action") == "ordered":
-                self.paper_order = dict(payload)
-            elif self.paper_order is not None and payload.get("order") == self.paper_order.get("order"):
-                self.paper_order = None
+            self._paper_orders.append(payload)
+            self.paper_order = open_paper_order(self._paper_orders)
         return self
 
     @staticmethod

@@ -62,6 +62,23 @@ changing the outline (`wayline outline show` prints it). An owner's edit of a pa
 unless what that part is made from changed. Each order makes a new version; the previous one is kept under
 `research/paper/earlier/v<n>/`.
 
+## The builds
+
+Every build of the paper is tested before the owner reads it: the kill argument (told the general report's last
+verdict), then the independent read, then sampled verdicts on the claims never sampled. A build that fails sends the
+points still standing to the next build, a fresh writer session, with no ticket; an order runs at most three.
+`PAPER.md` lists each gate of each build with its points. Read them to the owner when they ask how the paper stands.
+
+After three failed builds the paper is not passed, and it is the owner's choice, which "Waiting on you" lists: three
+more builds, keeping it as it is, or the points as objectives. Ask in one line with your recommendation, and on their
+word run `wayline paper builds more --project .`, `wayline paper builds keep --project .`, or `wayline paper builds
+objectives --project .`. Never choose for them.
+
+An unverifiable inherited claim stays out of the paper unless the owner kept it in the batch, and then the paper
+says it is not verified and why. The supplement ends with code's table of every inherited result's verdict and route.
+When the project has critiques, `research/paper/response/<critique>.md` answers each point verbatim; it is the owner's
+to send, never yours.
+
 ## The compilations
 
 Once the paper is composed, code compiles it with no model call: the order asks the scout once more about every

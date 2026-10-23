@@ -1078,7 +1078,7 @@ def claim_paths(claim, index=None):
 
 
 def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None, document=REPORT_PATH, prose_author=None,
-                  chosen=None):
+                  chosen=None, text=None, scope_down=True):
     """Sample the tagged claims of `research/REPORT.md`, or of `document`, and take one Type-B verdict on each.
 
     `chosen` is the claims to judge when the caller drew them itself: the run-end gates draw from the claims never
@@ -1086,6 +1086,8 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None,
 
     `document` is another document whose claims are sampled (decision 11: every claim in the report and the paper, by
     sampling; the paper's builds sample its parts from ticket 117), with `prose_author` the model its writer ran on.
+    `text` is the document's text when the caller read it (the paper's parts, joined); `scope_down=False` files no
+    `writing` ticket for a failing claim: a build of the paper sends its points to the next build instead.
 
     Every verdict goes through `gates.verdict` with `subject_kind: claim`, so it is journaled with
     its session and its model, on the verifier the table gives for the claim's author: the ticket that
@@ -1100,7 +1102,7 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None,
     book = Ledger(project)
     policy = policy_for(project, harness_root) if policy is None else policy
     try:
-        text = (project / document).read_text(encoding="utf-8")
+        text = (project / document).read_text(encoding="utf-8") if text is None else text
     except OSError:
         raise ProvenanceError("%s is not there; %s first" % (document, "render it with wayline report" if document == REPORT_PATH
                                                                else "draft it")) from None
@@ -1145,6 +1147,8 @@ def verify_claims(project, *, harness_root=HARNESS_ROOT, policy=None, seed=None,
             outcome["passed"].append(subject)
             continue
         outcome["failed"].append(subject)
+        if not scope_down:
+            continue
         if narrowed is None:
             narrowed = _finding_ids(context) if document == REPORT_PATH else {}
         filed = _claim_ticket(project, book, claim, subject, taken, from_finding, document, narrowed.get(claim.digest, ()))

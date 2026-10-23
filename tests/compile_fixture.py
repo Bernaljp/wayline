@@ -152,7 +152,8 @@ def make_paper(project):
     }, schema="paper")
     book.append_event("paper_order", {"order": 1, "action": "ordered", "by": "owner", "run": "stopped", "batch": None, "venue": "nature"})
     book.append_event("paper_order", {"order": 1, "action": "composed", "by": "owner", "version": 1, "commit": None,
-                                      "parts": list(paper.PARTS)})
+                                      "parts": list(paper.PARTS), "build": 1})
+    book.append_event("paper_order", {"order": 1, "action": "passed", "by": "owner", "version": 1, "build": 1})
     return book
 
 

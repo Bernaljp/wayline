@@ -60,6 +60,30 @@ lists it read-only, marked with its tag.
   whitelist gains `edit` and `reason`, token-guarded like the rest; the editor opens from `GET
   /api/projects/<id>/edit/<target>`.
 
+- Builds at the order (ticket 117; Implementation Decisions 17, 11, 14, 1, and 2). Every build of the paper is tested
+  before the owner reads it (`wayline.builds`).
+  - Each build runs three gates on the paper's parts, in order, each a fresh verifier session: the kill argument, its
+    two threads told the general report's last verdict (`gates.kill_argument`'s new `told`); the independent read
+    (`paper_read`); and sampled verdicts on the claims never sampled, over the sample cache the run-end gates keep
+    (`run_end.sample_new`). No gate files a ticket: a failed build's points go to the next build, a fresh writer
+    session given the previous parts and the points. `PAPER.md` lists each gate of each build with its points standing,
+    and `paper.json` records them (`builds`, `outcome`).
+  - The order stays open through its builds: `paper_order` gains `gated`, `passed`, `not_passed`, and `chosen`, and the
+    keys `build`, `points`, and `choice`; `composed` closes nothing now. At most `policy.paper.builds` (3, a new row of
+    decision 14's table) builds; after them the paper is not passed, compiled all the same, and the owner chooses with
+    the new `wayline paper builds more|keep|objectives`: three more builds (the order reopens, and the tick relaunches
+    a conductor for it), keeping it as it is, or the points as the owner's objectives. Under `interactive` and
+    `checkpoints` the owner is told; under `autonomous` it waits under the account's "Waiting on you".
+  - What the paper says about inherited work: an unverifiable claim the batch left out is in no part (its `{doc:...}`
+    tag or its words) and is listed in `PAPER.md`; one the batch kept says "not verified" and why in the sentence that
+    carries its tag; code appends a supplementary table of every inherited result's verdict, route, narrowed wording,
+    and reasons to the supplement, and the writer adds one Methods paragraph naming the routes. Each is checked before
+    anything is written, the writer resumed once with what failed.
+  - The concerns kept for the order reach the figure finish (change requests `from: paper`), the writer (who says in
+    the new `concerns` field how the paper answers each), and each compilation's checks (one `concern` check each). A
+    project with critiques gets `research/paper/response/<critique>.md` per critique, each point verbatim with its
+    answer; nothing sends one.
+
 - Compilations (ticket 118; Implementation Decisions 17, 13, 1, and 2). The venue-free paper becomes files the owner
   can submit, made by code alone through pandoc (`wayline.compilations`), every tool called through the tool runner.
   - Every paper order compiles `research/paper/compilations/plain/`, and `compilations/<venue>/` for the venue
