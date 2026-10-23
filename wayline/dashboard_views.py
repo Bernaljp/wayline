@@ -356,7 +356,7 @@ def _outline_row(project):
             "rendered": stamp.get("rendered_at"), "editable": True}
 
 
-def _references(project, problems):
+def _references(project, problems, events=None):
     """References as code reads it now: its numbered entries and its Not yet resolved rows, each with its state."""
     from wayline import references, sections
     path = "%s/%s" % (RESEARCH, sections.section_path(sections.REFERENCES))
@@ -373,7 +373,7 @@ def _references(project, problems):
                         "year": metadata.get("year"), "venue": metadata.get("container"),
                         "identifier": references.identifier_of(record)})
     unresolved = []
-    asked = _order_batch_items(project, problems)
+    asked = _order_batch_items(project, problems, events)
     for work, state, detail in view["unresolved"]:
         record = work.record or {}
         query = record.get("query") or {}
@@ -383,13 +383,13 @@ def _references(project, problems):
     return {"path": path, "exists": (project / path).is_file(), "entries": entries, "unresolved": unresolved}
 
 
-def _order_batch_items(project, problems):
+def _order_batch_items(project, problems, events=None):
     """The open paper order's batch, by each item's ref: `{ref: {batch, item, mark, default, marks}}`, empty with no order
     asking one. A reference's row carries its item, so the hand-over form's "drop it" and "keep the claim marked" are the
     batch's marks (ticket 121), saved through `mark` as the marks view saves them."""
     from wayline import batches, paper
     try:
-        opened = paper.open_order(project)
+        opened = paper.open_order(project, events)
         identifier = paper.waiting_on(project, opened) if opened else None
         if not identifier:
             return {}
@@ -485,16 +485,17 @@ def paper_view(project):
     problems = []
     events = _events(project, problems)
     record = _paper_record(project, problems)
+    shelf = venues()
     return {
         "sections": _section_rows(project, problems),
         "outline": _outline_row(project),
-        "references": _references(project, problems),
+        "references": _references(project, problems, events),
         "code_repository": _code_repository(project, events, problems),
         "methods": _methods(project),
         "paper": _paper_parts(project, record),
-        "compilations": _compilation_rows(project, record, problems),
-        "venues": venues(),
-        "order": _open_order(project, problems),
+        "compilations": _compilation_rows(project, record, problems, shelf),
+        "venues": shelf,
+        "order": _open_order(project, problems, events),
         "problems": problems,
     }
 
@@ -586,7 +587,7 @@ def venues(root=None):
     return found
 
 
-def _compilation_rows(project, record, problems):
+def _compilation_rows(project, record, problems, shelf=None):
     """Each compilation: its venue, the version it was made from, its outcome, its four downloads (the LaTeX directory a
     zip), and the parts chosen since it was made (`made before part X changed`)."""
     from wayline import compilations
@@ -595,7 +596,7 @@ def _compilation_rows(project, record, problems):
     except (OSError, ValueError) as failure:
         problems.append("the compilations: %s" % failure)
         return []
-    names = {item["venue"]: item["display_name"] for item in venues()}
+    names = {item["venue"]: item["display_name"] for item in (venues() if shelf is None else shelf)}
     rows = []
     for compiled in held:
         base = "%s/%s/%s" % (PAPER_DIR, compilations.COMPILATIONS, compiled["name"])
@@ -613,11 +614,11 @@ def _compilation_rows(project, record, problems):
     return rows
 
 
-def _open_order(project, problems):
+def _open_order(project, problems, events=None):
     """The paper order open now, `{order, batch, venue}`, or None: while one is open, a new order and a choice wait."""
     from wayline import paper
     try:
-        opened = paper.open_order(project)
+        opened = paper.open_order(project, events)
     except (OSError, ValueError) as failure:
         problems.append("the paper order: %s" % failure)
         return None

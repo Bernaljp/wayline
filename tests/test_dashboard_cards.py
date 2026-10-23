@@ -13,6 +13,7 @@ import io
 import json
 import sys
 import threading
+import time
 import unittest
 import zipfile
 from contextlib import redirect_stderr, redirect_stdout
@@ -274,9 +275,15 @@ class CardEndpointTest(CardsCase):
         self.assertEqual(self.card("compile").status, 400, "a compilation names its venue")
 
     def test_the_consolidation_card_says_what_the_session_reads_and_its_tokens(self):
+        from wayline import sections
+        lonely = self.card("consolidate?section=discussion")
+        self.assertEqual(lonely.status, 400, "what Confirm would refuse, the card refuses")
+        self.assertIn("nothing to consolidate", lonely.text)
+        for heading, text in (("Limits", "The noise model is Gaussian."), ("Next", "A heavier tail would bend the fit further.")):
+            sections.add_passage(self.book, "discussion", heading, text, by="owner")
         card = self.card("consolidate?section=discussion").json
-        self.assertEqual((card["action"], card["args"], card["confirm"]),
-                         ("consolidate", {"section": "discussion"}, "wayline consolidate discussion --yes"))
+        self.assertEqual((card["action"], card["args"], card["confirm"], card["passages"]),
+                         ("consolidate", {"section": "discussion"}, "wayline consolidate discussion --yes", 2))
         self.assertIn("Discussion", card["what"])
         self.assertIn("tokens", card["cost"])
         refused = self.card("consolidate?section=results")
@@ -327,6 +334,37 @@ class ConfirmTest(CardsCase):
         refused = self.act("compile", {"venue": "nature"})
         self.assertEqual(refused.status, 400)
         self.assertIn("paper order 2 is open", refused.json["error"])
+
+
+class LateTest(CardsCase):
+    """A button's action that answered 202 and failed after: the views say so, since no card holds it (the review's
+    finding); a choice waits while a compilation is being made."""
+
+    def test_a_compilation_that_fails_after_its_reply_is_shown_in_paper_and_a_choice_waits_for_it(self):
+        from wayline import dashboard
+        release = threading.Event()
+
+        def slow(project, venue=None, **options):
+            release.wait(10)
+            raise compilations.CompilationError("pandoc vanished")
+
+        with mock.patch.object(dashboard, "SWITCH_REPLY_S", 0.0), mock.patch.object(compilations, "compile_paper", slow):
+            answer = self.act("compile", {"venue": "nature"})
+            self.assertEqual((answer.status, answer.json["started"]), (202, "compile"))
+            refused = self.act("choose", {"alternative": "title-2"})
+            self.assertEqual(refused.status, 409)
+            self.assertIn("a compilation is being made", refused.json["error"])
+            release.set()
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and "compile" not in self.api("/paper").json["late"]:
+                time.sleep(0.1)
+        late = self.api("/paper").json["late"]
+        self.assertEqual(late["compile"]["error"], "pandoc vanished")
+        self.assertEqual(self.api("/decisions").json["late"], late, "Run reads the same, for the plotting select")
+        self.assertEqual(self.act("choose", {"alternative": "title-2"}).status, 200, "the compilation has ended")
+        with self.recorded_compiling():
+            self.act("compile", {"venue": "nature"})
+        self.assertNotIn("compile", self.api("/paper").json["late"], "asked again, the old failure goes")
 
 
 class TokenTest(CardsCase):
@@ -426,6 +464,12 @@ class ReferenceTest(CardsCase):
         url = self.act("reference", {"slug": "lost-work", "answer": "https://example.org/lost"})
         self.assertEqual(url.status, 400)
         self.assertIn("URL", url.json["error"])
+        elsewhere = self.temp / "private.pdf"
+        elsewhere.write_bytes(b"%PDF-1.4\n% not the project's\n")
+        typed = self.act("reference", {"slug": "lost-work", "answer": str(elsewhere)})
+        self.assertEqual(typed.status, 400, "a typed answer never names a file on the workstation")
+        self.assertIn("never named by its path", typed.json["error"])
+        self.assertFalse((self.project / "research" / "refs" / "lost-work" / "source").exists())
 
     def test_with_the_orders_batch_open_the_row_carries_its_item_and_drop_it_is_the_batch_mark(self):
         self.assertIsNone(self.row()["batch"])

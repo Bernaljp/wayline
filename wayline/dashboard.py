@@ -75,7 +75,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from wayline import HARNESS_ROOT, RESEARCH_VERSION, TAG, dag, dashboard_views, decisions
-from wayline.ledger import TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, Ledger, atomic_write, conductor_holder
+from wayline.ledger import TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, Ledger, atomic_write, conductor_holder, now_ts
 from wayline.project import (
     FINDINGS, HARNESS_JSON, NEEDS_HUMAN_NOTES, RESEARCH, ProjectError, active_path, answer, control, home, is_project, policy_for, rung_label,
     read_active, read_harness, read_jobs, read_projects, set_autonomy, set_ladder_changes, set_model_fallback, set_pacing, set_plotting,
@@ -1253,6 +1253,9 @@ class DashboardServer(ThreadingHTTPServer):
         # The long actions a card runs on a thread (a consolidation, the paper), by project and name: one of each at a time.
         self.working = set()
         self.working_lock = threading.Lock()
+        # What a button's action on a thread said once its 202 had gone (ticket 121), by project and then action: the
+        # Paper and Run views show it, until that action is asked again. A chat card keeps its own on the card.
+        self.late = {}
         super().__init__(address, handler)
 
     def shutdown(self):
@@ -1356,7 +1359,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return None
         try:
             project = self._project(match.group("project"))
-            status, report = run_action(name, project, body, self.headers, self.server)
+            late = self.server.late.setdefault(str(project), {}) if hasattr(self.server, "late") else {}
+            late.pop(name, None)
+            status, report = run_action(name, project, body, self.headers, self.server,
+                                        on_failure=lambda failure: late.__setitem__(name, {"error": str(failure), "at": now_ts()}))
         except ActionConflict as failure:
             return self._action_reply(HTTPStatus.CONFLICT, dict({"ok": False, "action": name, "error": str(failure)},
                                                                 **failure.details))
@@ -1617,15 +1623,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def api_decisions(self, query, project):
         """The decisions view (ticket 35), tagged by the ledger, which holds `DECISIONS.md` and `harness.json`, and by the active pointer."""
         path = self._project(project)
+        late = self._late(path)
         tag = etag("decisions", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)), _active_version(),
-                   dashboard_views.software_snapshot(path))
+                   dashboard_views.software_snapshot(path), late)
         if self._not_modified(tag):
             return None
         view = decisions.decisions_view(path)
         read = {}
         for entry in view["open"]:  # the new decision kinds get a card of their own on Run (ticket 110)
             entry["kind"], entry["about"] = dashboard_views.decision_kind(path, entry.get("origin"), read)
-        return self._json(view, tag)
+        return self._json(dict(view, late=late), tag)
 
     def api_changes(self, query, project):
         """The evolve loop's view (ticket 45): the feedback filed and what was made of each item, and the change records."""
@@ -1656,11 +1663,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def api_paper(self, query, project):
         """The Paper view (ticket 111), tagged by the ledger, the section files, and the minute a reference gives up at."""
         path = self._project(project)
+        late = self._late(path)
         tag = etag("paper", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)),
-                   dashboard_views.paper_snapshot(path))
+                   dashboard_views.paper_snapshot(path), late)
         if self._not_modified(tag):
             return None
-        return self._json(dashboard_views.paper_view(path), tag)
+        return self._json(dict(dashboard_views.paper_view(path), late=late), tag)
 
     def api_inherited(self, query, project):
         """The Inherited view (ticket 111), tagged by the ledger and the section files; a project with no documents has none."""
@@ -1730,6 +1738,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self._not_modified(tag):
             return None
         return self._json(chat.thread_view(path, records), tag)
+
+    def _late(self, path):
+        """What a button's action on a thread said after its reply had gone, for this project: `{action: {error, at}}`."""
+        return dict(getattr(self.server, "late", {}).get(str(path)) or {})
 
     def api_paper_card(self, query, project):
         """The paper order's card (ticket 115): the readiness list and the cost, built by code with no model call, which
@@ -1993,6 +2005,8 @@ def run_action(name, project, body, headers=None, server=None, on_failure=None):
         return HTTPStatus.OK, paper.order(project, by="owner", venue=venue or None)
     if name == "choose":
         from wayline import paper
+        if (str(project), "compile") in getattr(server, "working", _WORKING):
+            raise ActionConflict("a compilation is being made; choose once it has ended, or it would carry the part as it was")
         return HTTPStatus.OK, paper.choose(project, _string(_fields(body, ("alternative",)), "alternative"))
     if name == "plotting":
         library = _string(_fields(body, ("library",)), "library")
@@ -2035,6 +2049,8 @@ def _reference(project, body, headers):
     else:
         fields = _fields(body, ("slug", "answer"))
         slug, answer = _string(fields, "slug"), _string(fields, "answer")
+        if answer.strip().lower().endswith(".pdf"):  # what `hand_over` would read as a path on this machine
+            raise DashboardError("a DOI, an exact title, or leave it is typed; a PDF is dropped on the form, never named by its path")
     if not _SLUG.match(slug):
         raise DashboardError("a reference is named by its dossier's slug, as References lists it, got %r" % (slug,))
     try:
@@ -2107,12 +2123,11 @@ def _compile(project, venue, server, on_failure=None):
     """`wayline paper compile <venue> --yes`: the current version compiled for `venue` alone, refused while an order is open
     (its paper is not composed yet) and for a venue with no guidelines; on a thread of its own, since the tools take
     minutes and a paper over the venue's limit gets one fitting session."""
-    from wayline import compilations, paper
-    found = compilations.card(project, venue)
-    if found["version"] is None:
-        raise DashboardError("no paper is composed yet: the paper order composes it, and every order compiles it plainly")
-    if found["open"]:
-        raise DashboardError("paper order %d is open: compile once its paper is composed" % found["open"]["order"])
+    from wayline import compilations
+    try:
+        compilations.refuse_alone(compilations.card(project, venue))
+    except compilations.CompilationError as failure:
+        raise DashboardError(str(failure)) from None
     return _on_a_thread(server, project, "compile", lambda: compilations.compile_paper(project, venue), on_failure)
 
 
@@ -2145,10 +2160,12 @@ def button_card(project, action, query):
 
 def _consolidation_card(project, section):
     from wayline import consolidation, sections
-    refusal = consolidation._refusal(section)
+    refusal = consolidation.refusal(section)
     if refusal is not None:
         raise DashboardError(refusal)
     cost = consolidation.estimate(project, section)
+    if cost["passages"] < 2:
+        raise DashboardError("%s has %d current passage(s): there is nothing to consolidate" % (sections.TITLES[section], cost["passages"]))
     what = ("A consolidation of %s: one read-only writer session on %s %s reads its %d current passages (%d characters) and "
             "rewrites them into fewer that keep every tag, by: consolidation." % (
                 sections.TITLES[section], cost["model"], cost["effort"], cost["passages"], cost["chars"]))

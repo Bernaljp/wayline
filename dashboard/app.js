@@ -1994,6 +1994,7 @@ async function loadDecisions() {
 
 function renderDecisions(view, project) {
   renderControls(view.controls || {});
+  replace(document.getElementById('plotting-late'), lateLines(view.late, ['plotting']));
   const open = view.open || [];
   const before = JSON.stringify(state.openDecisions);
   state.openDecisions = { project, list: open };
@@ -2696,10 +2697,12 @@ function renderPaper(view, project) {
   state.paperShown = { view, project };  // what a reason's edit or cancel redraws from, with no request
   clearCards(project);
   const files = (view.sections || []).map((section) => renderedRow(project, section, [passagesLine(section)],
-    section.consolidates ? [cardButton(project, 'paper-sections-card', 'consolidate', { section: section.id }, 'consolidate')] : []));
+    section.consolidates ? [cardButton(project, 'paper-sections-card', 'consolidate', { section: section.id }, 'consolidate',
+      (section.passages || 0) < 2)] : []));  // a consolidation rewrites two passages or more into fewer
   if (view.outline) files.push(renderedRow(project, view.outline, [more('the proposed shape of the paper, built by code')]));
   replace(document.getElementById('paper-sections-body'), [
     files.length ? el('ul', { class: 'rows' }, files) : emptyState('no section is rendered yet'),
+    ...lateLines(view.late, ['consolidate', 'public']),
     ...problemsList(view.problems),
   ]);
   renderReferences(view.references || {}, project);
@@ -2753,7 +2756,8 @@ async function openCard(project, placeId, action, query) {
   const asked = new URLSearchParams(Object.entries(query || {}).filter(([, value]) => value));
   try {
     const headers = TOKEN ? { 'X-Wayline-Token': TOKEN } : {};
-    const response = await fetch(`/api/projects/${encodeURIComponent(project)}/cards/${action}${asked.size ? `?${asked}` : ''}`,
+    const search = asked.toString();
+    const response = await fetch(`/api/projects/${encodeURIComponent(project)}/cards/${action}${search ? `?${search}` : ''}`,
       { cache: 'no-store', headers });
     const text = await response.text();
     if (!response.ok) throw new Error(text.trim() || `${response.status} ${response.statusText}`);
@@ -2813,7 +2817,23 @@ function keepPick(select, key) {
   return select;
 }
 
+// Draw `id` only when what it shows changed since it was last drawn (`signature`), so an open select or a field being
+// typed in is left alone by a poll that changed nothing it shows.
+function drawnAlready(id, signature) {
+  state.drawn = state.drawn || {};
+  if (state.drawn[id] === signature) return true;
+  state.drawn[id] = signature;
+  return false;
+}
+
+// What a button's action said after its 202 had gone (`late`), as a line under its panel.
+function lateLines(late, names) {
+  return names.filter((name) => late && late[name]).map((name) =>
+    el('p', { class: 'note problems', text: `${CARD_LABELS[name] || name} failed after it started (${late[name].at}): ${late[name].error}` }));
+}
+
 function renderOrder(view, project) {
+  if (drawnAlready('paper-order-body', JSON.stringify([project, view.order, view.paper && view.paper.version, view.venues, TOKEN]))) return;
   const opened = view.order;
   const parts = [];
   if (opened) {
@@ -2899,6 +2919,8 @@ function compilationRow(project, item) {
 }
 
 function renderCompilations(view, project) {
+  if (drawnAlready('paper-compilations-body', JSON.stringify([project, view.compilations, view.venues, Boolean(view.paper), view.order,
+    view.late && view.late.compile]))) return;
   const compiled = view.compilations || [];
   const venue = keepPick(venueSelect('compile-venue', view.venues), 'compileVenue');
   const compile = el('button', { type: 'button', class: 'action', text: 'compile for this venue' });
@@ -2907,6 +2929,7 @@ function renderCompilations(view, project) {
   replace(document.getElementById('paper-compilations-body'), [
     rowsOrNone(compiled, (item) => compilationRow(project, item), 'none yet: every paper order compiles the paper plainly, and for the venue it names'),
     el('p', { class: 'inline acts' }, [venue, compile]),
+    ...lateLines(view.late, ['compile']),
   ]);
 }
 
@@ -2917,6 +2940,8 @@ function authorsOf(entry) {
 
 // References' entries are works, not items: a row of one opens nothing and inserts nothing.
 function renderReferences(references, project) {
+  const open = state.handOver && state.handOver.project === project ? state.handOver.slug : null;
+  if (drawnAlready('paper-references-body', JSON.stringify([project, references, open]))) return;
   const entries = references.entries || [];
   const unresolved = references.unresolved || [];
   replace(document.getElementById('paper-references-body'), [
@@ -2957,6 +2982,7 @@ function handOverButton(project, row) {
 }
 
 function loadReferencesAgain() {
+  if (state.drawn) delete state.drawn['paper-references-body'];
   const shown = state.paperShown;
   if (shown && shown.project === state.project) renderReferences(shown.view.references || {}, shown.project);
 }
@@ -2964,6 +2990,7 @@ function loadReferencesAgain() {
 async function handOver(project, row, body, headers, said) {
   const reply = await perform('reference', body, said, project, headers);
   if (reply) state.handOver = null;
+  if (reply && row.batch && reply.answer !== 'leave') await markReference(project, row, 'hand over');
   return reply;
 }
 
@@ -2972,7 +2999,18 @@ function handOverForm(project, row) {
   if (!draft || draft.project !== project || draft.slug !== row.slug) return [];
   const field = el('input', { type: 'text', 'aria-label': `a DOI or the exact title of ${row.slug}`, placeholder: 'a DOI or the exact title' });
   field.value = draft.text;
-  field.addEventListener('input', () => { draft.text = field.value; });
+  const typed = () => { draft.text = field.value; draft.caret = [field.selectionStart, field.selectionEnd]; };
+  for (const name of ['input', 'select', 'keyup', 'click']) field.addEventListener(name, typed);
+  field.addEventListener('focus', () => { draft.focused = true; });
+  field.addEventListener('blur', () => setTimeout(() => { if (field.isConnected) draft.focused = false; }, 0));
+  if (draft.focused) {
+    queueMicrotask(() => {
+      if (!field.isConnected) return;
+      field.focus();
+      const [start, end] = draft.caret || [field.value.length, field.value.length];
+      field.setSelectionRange(start, end);
+    });
+  }
   const send = el('button', { type: 'submit', class: 'action primary', text: 'to the scout' });
   const form = el('form', { class: 'inline hand-over' }, [field, send]);
   form.addEventListener('submit', (event) => {
@@ -3859,6 +3897,7 @@ const CARD_LABELS = {
   'paper': 'Order the paper',
   'public': 'Make the code repository public',
   'compile': 'Compile for another venue',
+  'plotting': 'Set the plotting library',
 };
 // The item ids the server takes with a message, as an item link names them.
 const CHAT_ITEM = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,79}$/;

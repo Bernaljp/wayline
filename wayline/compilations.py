@@ -60,7 +60,7 @@ from wayline.tools import Tools, ToolOutput, ToolsError, failure_line, run_recor
 __all__ = [
     "CompilationError", "COMPILATIONS", "PLAIN", "RECORD_JSON", "SCHEMA", "FITTING_SCHEMA", "FILTER", "MARK", "FITTING_COST",
     "compile_paper", "after_order", "last_retry", "card", "card_text", "read_compilation", "fitting_problems", "tag_text",
-    "plan_citations", "recording_runner", "recorded_runner", "compile_command", "read_compilations", "made_before",
+    "plan_citations", "recording_runner", "recorded_runner", "compile_command", "read_compilations", "made_before", "refuse_alone",
 ]
 
 COMPILATIONS = "compilations"            # research/paper/compilations/<name>/
@@ -913,6 +913,15 @@ def card(project, venue, harness_root=HARNESS_ROOT):
             "open": paper.open_order(book), "confirm": "wayline paper compile %s --yes" % venue}
 
 
+def refuse_alone(found):
+    """Refuse a compilation alone that `found`, its card, says cannot be made now: no paper composed yet, or an order open,
+    whose paper is not composed yet. The verb and the dashboard's `compile` action both ask this."""
+    if found["version"] is None:
+        raise CompilationError("no paper is composed yet: the paper order composes it, and every order compiles it plainly")
+    if found["open"]:
+        raise CompilationError("paper order %d is open: compile once its paper is composed" % found["open"]["order"])
+
+
 def card_text(found):
     lines = ["Compile the paper for %s (%s): a compilation alone, typeset and checked under its guidelines; nothing is "
              "submitted." % (found["display_name"], found["venue"]), ""]
@@ -951,8 +960,7 @@ def compile_command(args):
         if not options.yes:
             print(json.dumps(found, indent=2, default=str) if options.json else card_text(found))
             return 0
-        if found["open"]:
-            raise CompilationError("paper order %d is open: compile once its paper is composed" % found["open"]["order"])
+        refuse_alone(found)
         made = compile_paper(project, options.venue)
     except (CompilationError, paper.PaperError) as failure:
         print("wayline paper compile: %s" % failure, file=sys.stderr)
