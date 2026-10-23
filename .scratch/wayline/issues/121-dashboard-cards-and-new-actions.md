@@ -27,4 +27,4 @@ Not part of this ticket:
 - [x] The cards cover what ticket 118 added: the paper order's card takes an optional venue (`wayline paper --yes --for <venue>`, `paper.order(..., venue=)`), and a `compile` card takes one (`wayline paper compile <venue> --yes`). Both are in the chat's card fields (`chat.CARD_FIELDS`, ticket 114) and the session's card list as well as on the buttons. Until then the chat's `paper` card takes no arguments and no card compiles, while the routing table already lists both commands as confirm.
 - [x] The `ACTIONS` whitelist gains exactly these actions, each refusing without the token; an order's end sends a notice outside `autonomous`.
 - [ ] Tests: HTTP over a fixture ledger for every action with and without the token, the downloads with range and integrity checks, and the stale-compilation mark; built in the dashboard's designed style and usable at phone width.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
