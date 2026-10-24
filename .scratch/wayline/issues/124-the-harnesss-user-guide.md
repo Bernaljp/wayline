@@ -28,16 +28,16 @@ Not part of this ticket:
 
 Through them, every ticket from 71 to 121. It blocks 122.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#282](https://github.com/Bernaljp/wayline/issues/282) (mirror; the local file is the source)
 
 **Milestone:** M8 A paper that grows with the work (v1.1.0). **Spec:** none names this guide: it is the owner's reading of the "documentation site" the M8 tickets named, chosen on 2026-10-18 and recorded in `.scratch/wayline/waves.md`; the M8 tickets whose documentation-site criteria it replaces.
 
-- [ ] `docs/guide/` holds one page per topic above and an index page that links them all; the repository's `README.md` links the index.
-- [ ] A test reads every `wayline <verb>` the guide quotes and checks that the verb is in `cli.VERBS`, so a renamed or removed verb fails the suite instead of leaving the guide wrong.
-- [ ] Every flag, file path, and setting the guide names exists in the code at the commit the guide is written on.
-- [ ] The guide uses the glossary's words and none of the glossary's _Avoid_ words in their avoided sense.
-- [ ] Each page says what happens under `interactive`, `checkpoints`, and `autonomous` wherever the three differ.
-- [ ] `CHANGELOG.md` under `## Unreleased` names the guide.
-- [ ] `python3 -m unittest` passes.
+- [x] `docs/guide/` holds one page per topic above and an index page that links them all; the repository's `README.md` links the index.
+- [x] A test reads every `wayline <verb>` the guide quotes and checks that the verb is in `cli.VERBS`, so a renamed or removed verb fails the suite instead of leaving the guide wrong.
+- [x] Every flag, file path, and setting the guide names exists in the code at the commit the guide is written on.
+- [x] The guide uses the glossary's words and none of the glossary's _Avoid_ words in their avoided sense.
+- [x] Each page says what happens under `interactive`, `checkpoints`, and `autonomous` wherever the three differ.
+- [x] `CHANGELOG.md` under `## Unreleased` names the guide.
+- [x] `python3 -m unittest` passes.
