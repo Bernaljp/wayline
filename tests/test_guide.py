@@ -10,7 +10,8 @@ ROOT = Path(__file__).resolve().parent.parent
 GUIDE = ROOT / "docs" / "guide"
 PAGES = ["getting-started.md", "talking.md", "objectives.md", "midway.md", "research.md", "paper.md", "run.md",
          "software.md", "upgrading.md"]
-VERB = re.compile(r"`wayline ([a-z][a-z-]*)([^`]*)`")
+VERB = re.compile(r"(?:`|^)wayline ([a-z][a-z-]*)([^`\n]*)", re.MULTILINE)
+WORD = re.compile(r"^ ([a-z][a-z-]*)(?![\w<|])")
 FLAG = re.compile(r"(?<![\w-])(--[a-z][a-z-]*)")
 # Glossary _Avoid_ words that have no innocent sense in this guide.
 AVOIDED = ["final report", "table of contents", "front door", "KPI", "exploration run", "plotting pass",
@@ -23,6 +24,16 @@ def guide_text():
 
 def verb_usage(name):
     return next((verb.usage for verb in cli.VERBS if verb.name == name), None)
+
+
+def usage_flags(name):
+    return set(FLAG.findall(verb_usage(name) or ""))
+
+
+def source_flags():
+    """Every option the package's parsers declare, as a whole token."""
+    text = "".join(path.read_text(encoding="utf-8") for path in (ROOT / "wayline").glob("*.py"))
+    return set(re.findall(r"[\"'](--[a-z][a-z-]*)[\"'=]", text))
 
 
 class GuidePages(unittest.TestCase):
@@ -43,18 +54,41 @@ class GuidePages(unittest.TestCase):
     def test_every_flag_of_a_quoted_verb_is_in_its_usage(self):
         for page, text in guide_text().items():
             for match in VERB.finditer(text):
-                usage = verb_usage(match.group(1)) or ""
+                flags = usage_flags(match.group(1))
                 for flag in FLAG.findall(match.group(2)):
-                    if flag in ("--project", "--help"):
+                    if flag in ("--project", "--help"):  # every writing verb takes --project; --help every verb
                         continue
-                    self.assertIn(flag, usage, "%s: wayline %s %s" % (page, match.group(1), flag))
+                    self.assertIn(flag, flags, "%s: wayline %s %s" % (page, match.group(1), flag))
+
+    def test_every_quoted_subcommand_is_in_its_verbs_usage(self):
+        for page, text in guide_text().items():
+            for match in VERB.finditer(text):
+                word = WORD.match(match.group(2))
+                if word:
+                    usage = set(re.findall(r"[a-z][a-z-]*", verb_usage(match.group(1)) or ""))
+                    self.assertIn(word.group(1), usage, "%s: wayline %s %s" % (page, match.group(1), word.group(1)))
+
+    def test_every_flag_named_anywhere_is_declared_by_a_parser(self):
+        declared = source_flags()
+        for page, text in guide_text().items():
+            for flag in FLAG.findall(text):
+                self.assertIn(flag, declared, "%s names %s" % (page, flag))
+
+    def test_every_setting_named_is_a_key_of_harness_json_or_policy(self):
+        harness = (ROOT / "schemas" / "harness.json").read_text(encoding="utf-8")
+        policy = (ROOT / "policy.json").read_text(encoding="utf-8")
+        for key in ("research_version", "stop_when", "wallclock_hours", "gpu_hours", "plotting", "environment", "chat",
+                    "dashboard", "paper_order", "code_repository", "model_fallback", "ladder_changes", "human_only"):
+            self.assertIn('"%s"' % key, harness, key)
+        for key in ("give_up_days", "min_seeds", "port"):
+            self.assertIn('"%s"' % key, policy, key)
 
     def test_every_repository_path_named_exists(self):
         prefixes = ("wayline/", "skills/", "dashboard/", "schemas/", "templates/", "guidelines/", "methods/",
                     "converters/", "policy.json", "CHANGELOG.md", "CONTEXT.md")
         for page, text in guide_text().items():
-            for path in re.findall(r"`([A-Za-z_./-]+)`", text):
-                if path.startswith(prefixes) and "<" not in path:
+            for path in re.findall(r"`([A-Za-z0-9_./-]+)`", text):
+                if path.startswith(prefixes):
                     self.assertTrue((ROOT / path).exists(), "%s names %s" % (page, path))
 
     def test_no_avoided_word(self):

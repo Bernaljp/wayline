@@ -75,7 +75,8 @@ How the autonomies differ at setup:
 - `interactive`: you confirm the spec and the graph in the conversation.
 - `checkpoints`: you answer the "confirm" decision tickets for the spec and the graph.
 - `autonomous`: the decider confirms them, takes every grill question that is not human-only or irreversible, and
-  setup ends only when every one of the ten questions is answered; nothing about them is asked after setup.
+  setup ends only when each of the ten questions is answered or said to have nothing to ask (the front matter alone may
+  be left for later); nothing about them is asked after setup.
 
 Lowering autonomy means stopping the conductor first; the session never lowers it on its own.
 

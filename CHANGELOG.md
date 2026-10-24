@@ -33,6 +33,13 @@ refuses a project made before it, which keeps its old tag or starts again on the
 project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
 lists it read-only, marked with its tag.
 
+- The harness's user guide (ticket 124), in place of the documentation site the M8 tickets named: Markdown under
+  `docs/guide/`, readable on GitHub, its index linked from `README.md`, one page per topic (getting started, talking
+  with a project, objectives and goals, starting midway, the research, the paper, the run, software and environments,
+  upgrading), written from the code in the glossary's words, each saying what the three autonomies do where they
+  differ. `tests/test_guide.py` checks every `wayline` verb, subcommand, and flag the guide quotes against
+  `cli.VERBS` and the parsers, and every repository path and setting it names. The `result` verb's usage now lists
+  `plot <id> "<request>"`, which it already took.
 - The decider orders the paper under `autonomous` (ticket 120; Implementation Decision 17). Setup question 8 is
   recorded: `harness.json` gains `paper_order`, `{decider, venue}`, sent with the intake's spec (`wayline intake
   --from -`), yes with no venue when absent. At the stopping rule's own ends (`objectives_closed`, `goal_reached`,
