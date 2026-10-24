@@ -2,7 +2,7 @@
 
 One command that turns a research intent into `REPORT.md` under a Claude Code subscription. Deterministic Python (standard library only) decides what runs, when, on which resources, and what counts as done; models decide only content.
 
-- The brief: `BRIEF.md`. The glossary: `CONTEXT.md`. The spec: `.scratch/wayline/spec.md`. The tickets: `.scratch/wayline/issues/`, mirrored to GitHub issues.
+- The user guide: [docs/guide/index.md](docs/guide/index.md). The brief: `BRIEF.md`. The glossary: `CONTEXT.md`. The spec: `.scratch/wayline/spec.md`. The tickets: `.scratch/wayline/issues/`, mirrored to GitHub issues.
 - Run it: `bin/wayline --help` or `python -m wayline --help` from this directory. Python 3.12, no third-party packages.
 - Test it: `python -m unittest` from this directory.
 - Versions: one tag per global change, listed in `CHANGELOG.md`; a project pins the tag in its `harness.json`.
