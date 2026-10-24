@@ -1,0 +1,10 @@
+{
+  "metric": "auroc",
+  "direction": "up",
+  "target": 0.82,
+  "held_out_split": "held_out",
+  "eval_command": "PYTHONPATH=src python3 -m toy.eval --split held_out",
+  "baseline": {"value": null, "source": null},
+  "dataset_or_split": null,
+  "min_seeds": null
+}

@@ -1,0 +1,9 @@
+{"intent": "I'm starting a small project from zero. The question is whether adding feature interaction terms improves held-out AUROC on a synthetic two-class set. The generator and the training code are in src/toy/: generate.py makes the data, train.py trains on the GPU and writes a summary, and eval.py prints 'auroc: <value>' from a summary. Beyond the number I want the real answer: do the interaction terms help, and by how much.",
+ "references": ["materials/paper-a.pdf", "materials/paper-b.pdf"],
+ "data": ["The synthetic two-class set is made by src/toy/generate.py from one seeded stream; the held-out split is the last fifth of the rows drawn (HELD_OUT_FRACTION = 0.2) and is used for evaluation only"],
+ "constraints": ["train.py trains on the GPU",
+                 "Assumed: 'run on its own overnight once it is set up' means autonomy autonomous",
+                 "Assumed: the code repository released with the paper in materials/paper-c-source.tar.gz is a reference the work may build on, not the project's own code"],
+ "autonomy": "autonomous", "radius": "moderate", "model_fallback": "auto", "ladder_changes": "ask",
+ "code_repository": {"shape": "package", "license": "MIT"},
+ "paper_order": {"decider": true, "venue": "arxiv"}}

@@ -1,0 +1,52 @@
+{
+  "harness_tag": "v1.0.1",
+  "research_version": 2,
+  "autonomy": "autonomous",
+  "radius": "moderate",
+  "model_fallback": "auto",
+  "ladder_changes": "ask",
+  "human_only": [
+    "objective",
+    "data"
+  ],
+  "budgets": {
+    "gpu_hours": 4,
+    "wallclock_hours": 12
+  },
+  "reservations": {
+    "gpu": [],
+    "cores": 8,
+    "ram_gb": 64,
+    "processes": []
+  },
+  "pacing": {
+    "stop_at": 0.9,
+    "cheap_at": 0.8
+  },
+  "notify": {
+    "hermes_python": "~/.hermes/hermes-agent/venv/bin/python"
+  },
+  "dashboard": {
+    "port": 8766,
+    "bind": "127.0.0.1",
+    "poll_journal_s": 2,
+    "poll_views_s": 5
+  },
+  "policy": {},
+  "owner_email": "owner@example.org",
+  "paper_order": {
+    "decider": true,
+    "venue": "arxiv"
+  },
+  "code_repository": {
+    "shape": "package",
+    "license": "MIT",
+    "remote": {
+      "repository": "Bernaljp/toy",
+      "url": "https://github.com/Bernaljp/toy",
+      "branch": "main",
+      "how": "new"
+    },
+    "visibility": "private"
+  }
+}
