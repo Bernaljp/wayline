@@ -40,4 +40,4 @@ Through them, every ticket from 71 to 121. It blocks 122.
 - [x] The guide uses the glossary's words and none of the glossary's _Avoid_ words in their avoided sense.
 - [x] Each page says what happens under `interactive`, `checkpoints`, and `autonomous` wherever the three differ.
 - [x] `CHANGELOG.md` under `## Unreleased` names the guide.
-- [ ] `python3 -m unittest` passes.
+- [x] `python3 -m unittest` passes.
