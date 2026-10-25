@@ -1,0 +1,65 @@
+{
+  "harness_tag": "v1.0.1",
+  "research_version": 2,
+  "autonomy": "autonomous",
+  "radius": "moderate",
+  "model_fallback": "auto",
+  "ladder_changes": "ask",
+  "human_only": [
+    "objective",
+    "data"
+  ],
+  "budgets": {
+    "gpu_hours": 8,
+    "wallclock_hours": 24
+  },
+  "reservations": {
+    "gpu": [],
+    "cores": 8,
+    "ram_gb": 64,
+    "processes": []
+  },
+  "pacing": {
+    "stop_at": 0.9,
+    "cheap_at": 0.8
+  },
+  "notify": {
+    "hermes_python": "~/.hermes/hermes-agent/venv/bin/python"
+  },
+  "dashboard": {
+    "port": 8766,
+    "bind": "127.0.0.1",
+    "poll_journal_s": 2,
+    "poll_views_s": 5
+  },
+  "policy": {
+    "difficulty": {
+      "1": 5,
+      "2": 5,
+      "3": 5,
+      "4": 6,
+      "5": 6
+    },
+    "max_parallel_workers": 4,
+    "paper": {
+      "builds": 1
+    }
+  },
+  "owner_email": "owner@example.org",
+  "paper_order": {
+    "decider": true,
+    "venue": "arxiv"
+  },
+  "docs": {
+    "theme": "furo",
+    "package": "src/toy",
+    "layout": {
+      "tutorials": "docs/tutorials",
+      "how_to": "docs/how-to",
+      "reference": "docs/reference",
+      "explanation": "docs/explanation",
+      "gallery": "docs/gallery",
+      "examples": "docs/examples"
+    }
+  }
+}

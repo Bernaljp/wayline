@@ -76,12 +76,12 @@ It blocks 114 and 115.
 - [x] Under `autonomous`, the skill opens a conversation with "Decided for you" as one numbered item when any decision is not yet reviewed, and a yes journals `reviewed` for each one.
 - [x] A batch of more than five items is shown as one line with its count and a link to the marks view.
 - [x] Nothing installs a unit for `claude remote-control`; how to start it in a project is the user guide's (124).
-- [ ] Tests:
+- [x] Tests:
   - the skill tree's shape and routing table against the verb table;
   - the CLAUDE.md block;
   - the drafted-ticket verb's checks over a temporary project;
   - the `human_only` classes;
-  - the recorded setup conversation fixture (decision 12's fixtures) updated to the new setup order, run on demand.
+  - the recorded setup conversation fixture (decision 12's fixtures) updated to the new setup order, run on demand. (Run live by ticket 122 on 2026-10-24 as the toy's setup from zero, now `fixtures/skill/wayline/recorded/`: ten of its thirteen checks pass, and the three it fails are ticket 126's; `docs/verification/m8.md`.)
 - [x] The verb table of decision 1 gains the drafted-ticket verb in the same commit as the code.
 - [x] The changelog's `## Unreleased` section describes the `wayline` skill and the phase skills' retirement.
 - [x] `python -m unittest` passes.
