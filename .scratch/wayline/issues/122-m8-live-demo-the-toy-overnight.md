@@ -37,4 +37,4 @@ What the run finds wrong is filed as follow-up tickets rather than fixed here.
 - [x] A v1.0.x project under v1.1.0: `run` and `tick` refuse with decision 17's message, and `wayline upgrade --to v1.0.1` restores the shared checkout; recorded.
 - [x] `docs/verification/m8.md` holds the journal excerpts, counts, and commands of the run; `~/wayline-m7/toy/` is unchanged.
 - [x] Anything the run found wrong is filed as a follow-up ticket and named in the pull request.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
