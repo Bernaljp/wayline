@@ -5,5 +5,6 @@
                  "Assumed: 'run on its own overnight once it is set up' means autonomy autonomous",
                  "Assumed: the code repository released with the paper in materials/paper-c-source.tar.gz is a reference the work may build on, not the project's own code"],
  "autonomy": "autonomous", "radius": "moderate", "model_fallback": "auto", "ladder_changes": "ask",
+ "gpu_hours": 4, "wallclock_hours": 12,
  "code_repository": {"shape": "package", "license": "MIT"},
  "paper_order": {"decider": true, "venue": "arxiv"}}

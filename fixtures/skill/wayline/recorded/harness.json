@@ -10,8 +10,8 @@
     "data"
   ],
   "budgets": {
-    "gpu_hours": 4,
-    "wallclock_hours": 12
+    "gpu_hours": 8,
+    "wallclock_hours": 24
   },
   "reservations": {
     "gpu": [],
@@ -32,21 +32,34 @@
     "poll_journal_s": 2,
     "poll_views_s": 5
   },
-  "policy": {},
+  "policy": {
+    "difficulty": {
+      "1": 5,
+      "2": 5,
+      "3": 5,
+      "4": 6,
+      "5": 6
+    },
+    "max_parallel_workers": 4,
+    "paper": {
+      "builds": 1
+    }
+  },
   "owner_email": "owner@example.org",
   "paper_order": {
     "decider": true,
     "venue": "arxiv"
   },
-  "code_repository": {
-    "shape": "package",
-    "license": "MIT",
-    "remote": {
-      "repository": "Bernaljp/toy",
-      "url": "https://github.com/Bernaljp/toy",
-      "branch": "main",
-      "how": "new"
-    },
-    "visibility": "private"
+  "docs": {
+    "theme": "furo",
+    "package": "src/toy",
+    "layout": {
+      "tutorials": "docs/tutorials",
+      "how_to": "docs/how-to",
+      "reference": "docs/reference",
+      "explanation": "docs/explanation",
+      "gallery": "docs/gallery",
+      "examples": "docs/examples"
+    }
   }
 }
