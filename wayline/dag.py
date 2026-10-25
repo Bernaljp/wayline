@@ -42,7 +42,9 @@ def _layers(nodes, parents):
 
     Iterative post-order over `parents` rather than the prototype's memoized recursion, so a large
     graph cannot exhaust the call stack; the layer numbers it produces are the same ones the
-    recursive `L(n)` would.
+    recursive `L(n)` would. One parent is pushed at a time, so the stack is the path from `start`
+    and a parent already on it closes a cycle; pushing every pending parent at once took a parent
+    waiting for a sibling's sake (a node blocked by two nodes, one of which blocks the other) for one.
     """
     layer = {}
     for start in nodes:
@@ -51,13 +53,12 @@ def _layers(nodes, parents):
         stack, on_stack = [start], {start}
         while stack:
             node = stack[-1]
-            pending = [parent for parent in parents[node] if parent not in layer]
-            if pending:
-                for parent in pending:
-                    if parent in on_stack:
-                        raise DagError("the edges form a cycle through node %r" % (parent,))
-                    on_stack.add(parent)
-                    stack.append(parent)
+            parent = next((parent for parent in parents[node] if parent not in layer), None)
+            if parent is not None:
+                if parent in on_stack:
+                    raise DagError("the edges form a cycle through node %r" % (parent,))
+                on_stack.add(parent)
+                stack.append(parent)
             else:
                 layer[node] = 1 + max((layer[parent] for parent in parents[node]), default=-1)
                 on_stack.discard(node)

@@ -1,0 +1,59 @@
+name: showcase
+
+# The public showcase (showcase/README.md): the dashboard over the M8 toy run, built from this commit's own page and
+# server. A pull request builds it and opens every view in Chrome, keeping a screenshot of each; a push to master builds
+# it and publishes it to GitHub Pages, so the showcase always shows the interface master has.
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: showcase-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the showcase
+        run: python3 -m showcase.build _site
+      - name: Open every view in Chrome
+        env:
+          SHOWCASE_SITE: _site
+          SHOWCASE_SHOTS: shots
+        run: python3 -m unittest -v tests.test_showcase tests.test_showcase_browser
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: showcase-screenshots
+          path: shots
+          if-no-files-found: ignore
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        with:
+          path: _site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -33,6 +33,20 @@ refuses a project made before it, which keeps its old tag or starts again on the
 project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
 lists it read-only, marked with its tag.
 
+- The public showcase (`showcase/`): the dashboard over the M8 toy run as a static site on GitHub Pages, and the
+  repository under the MIT license (`LICENSE`), with a `README.md` for a reader new to wayline. `python3 -m
+  showcase.build <out>` serves a snapshot of the run (`showcase/toy.tar.xz`: what the views read, the paper, the plots
+  and figures, the documentation site, and the small result files; no transcript, raw table, address, or notifier)
+  with this checkout's own server, records every GET the page makes, and writes the answers beside the page itself,
+  unchanged but for `replay.js`, which answers the page's requests from them and refuses a POST. The
+  `showcase` workflow builds it on every pull request and opens every view in Chrome, keeping screenshots, and
+  publishes it on every push to master, so it shows the interface master has; `tests/test_showcase.py` fails on a
+  GET route `COVERAGE` does not account for, and `tests/test_showcase_browser.py` on a request no recording answers.
+- The ticket graph draws a ticket blocked by two tickets one of which blocks the other (`dag._layers`). The layering
+  pushed every pending parent at once and took a parent still waiting for its sibling's sake for a cycle, so the
+  dashboard's graph of the M8 toy run (ticket 96 blocked by 115 and 116, and 116 by 115) answered 500, "the edges form
+  a cycle through node 115". It now lays out one parent at a time, so the stack is the path and only a real cycle
+  raises.
 - The harness's user guide (ticket 124), in place of the documentation site the M8 tickets named: Markdown under
   `docs/guide/`, readable on GitHub, its index linked from `README.md`, one page per topic (getting started, talking
   with a project, objectives and goals, starting midway, the research, the paper, the run, software and environments,

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Not part of the showcase</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main style="padding: 24px 16px; max-width: 70ch; margin: 0 auto; font-family: var(--prose)">
+  <h2>Not part of the showcase</h2>
+  <p id="line">This file is not part of the showcase.</p>
+  <p><a href="./">Back to the dashboard</a></p>
+</main>
+<script>
+  // What `replay.js` points a link at when the showcase holds no copy of the file it names (in the fragment).
+  fetch('showcase.json').then((response) => response.json()).then((showcase) => {
+    const path = decodeURIComponent(location.hash.slice(1));
+    document.getElementById('line').textContent = showcase.withheld.file.replace('{path}', path);
+  });
+</script>
+</body>
+</html>
