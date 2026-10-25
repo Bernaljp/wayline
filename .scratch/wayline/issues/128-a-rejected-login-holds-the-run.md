@@ -13,7 +13,7 @@ On the toy's live run (ticket 122, `docs/verification/m8.md`), the units loaded 
 
 **Status:** ready-for-agent
 
-**GitHub:** (mirror; the local file is the source)
+**GitHub:** [#335](https://github.com/Bernaljp/wayline/issues/335) (mirror; the local file is the source)
 
 **Milestone:** after M8 (v1.1.x). **Spec:** Implementation Decisions 5 (the pause, the login warning), 15 (a session refused before its first turn), 16 (the escalation chain); ticket 122's live record.
 

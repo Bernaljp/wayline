@@ -13,7 +13,7 @@ On the toy's live setup (ticket 122, `docs/verification/m8.md`), the session rec
 
 **Status:** ready-for-agent
 
-**GitHub:** (mirror; the local file is the source)
+**GitHub:** [#332](https://github.com/Bernaljp/wayline/issues/332) (mirror; the local file is the source)
 
 **Milestone:** after M8 (v1.1.x). **Spec:** Implementation Decision 17 (objectives, goals, and measures; talking with the project), 1 (the verb table); ticket 122's live record.
 

@@ -10,7 +10,7 @@ On the toy's live setup (ticket 122, `docs/verification/m8.md`), the decider con
 
 **Status:** ready-for-agent
 
-**GitHub:** (mirror; the local file is the source)
+**GitHub:** [#338](https://github.com/Bernaljp/wayline/issues/338) (mirror; the local file is the source)
 
 **Milestone:** after M8 (v1.1.x). **Spec:** Implementation Decisions 2 (replay), 8 (status and the dashboard); ticket 122's live record.
 

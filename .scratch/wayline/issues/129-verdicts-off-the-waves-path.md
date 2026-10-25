@@ -13,7 +13,7 @@ On the toy's live run (ticket 122, `docs/verification/m8.md`), `_drain_verdicts`
 
 **Status:** ready-for-agent
 
-**GitHub:** (mirror; the local file is the source)
+**GitHub:** [#336](https://github.com/Bernaljp/wayline/issues/336) (mirror; the local file is the source)
 
 **Milestone:** after M8 (v1.1.x). **Spec:** Implementation Decisions 5 (the wave), 11 (verdicts), 14 (the policy table); ticket 122's live record.
 

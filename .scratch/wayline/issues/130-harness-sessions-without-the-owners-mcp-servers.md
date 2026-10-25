@@ -11,7 +11,7 @@ On the toy's live run (ticket 122, `docs/verification/m8.md`), every verdict, de
 
 **Status:** ready-for-agent
 
-**GitHub:** (mirror; the local file is the source)
+**GitHub:** [#337](https://github.com/Bernaljp/wayline/issues/337) (mirror; the local file is the source)
 
 **Milestone:** after M8 (v1.1.x). **Spec:** Implementation Decision 4 (guards and permissions), 7 (the launcher); ticket 122's live record.
 

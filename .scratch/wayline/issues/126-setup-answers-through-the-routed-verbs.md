@@ -21,7 +21,7 @@ What to build:
 
 **Status:** ready-for-agent
 
-**GitHub:** (mirror; the local file is the source)
+**GitHub:** [#333](https://github.com/Bernaljp/wayline/issues/333) (mirror; the local file is the source)
 
 **Milestone:** after M8 (v1.1.x). **Spec:** Implementation Decision 17 (talking with the project: setup, at every autonomy; the stopping rule), 1 (the verb table), 12 (fixtures); ticket 109; ticket 122's live record.
 
