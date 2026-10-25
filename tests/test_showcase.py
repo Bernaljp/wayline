@@ -114,6 +114,18 @@ class LeftOutTest(unittest.TestCase):
             if path.is_file():
                 self.assertIsNone(build.SECRET.search(path.read_bytes()), relative)
 
+    def test_no_recording_names_where_the_build_extracted_the_snapshot(self):
+        site, index = built_site()
+        for path, recording in index["recordings"].items():
+            self.assertNotIn(build.SCRATCH_PREFIX.encode(), (site / recording["body"]).read_bytes(), path)
+
+    def test_the_overview_shows_the_runs_workstation_and_where_the_run_kept_the_project(self):
+        site, index = built_site()
+        about = json.loads(build.ABOUT.read_text(encoding="utf-8"))
+        overview = json.loads((site / index["recordings"]["/api/projects/toy/overview"]["body"]).read_text(encoding="utf-8"))
+        self.assertEqual(overview["resources"], about["machine"]["view"])
+        self.assertEqual(overview["project"], about["source"])
+
     def test_what_the_replay_says_for_a_transcript_counts_what_the_snapshot_left_out(self):
         _, index = built_site()
         about = json.loads(build.ABOUT.read_text(encoding="utf-8"))

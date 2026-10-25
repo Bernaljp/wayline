@@ -36,7 +36,8 @@ The M8 toy run (ticket 122), October 24 to 25, 2026, on wayline's v1.1.0 line be
   ([#332](https://github.com/Bernaljp/wayline/issues/332) to [#347](https://github.com/Bernaljp/wayline/issues/347)):
   among them a rejected login read as a model failure, verdicts run one at a time inside a wave, the plotter writing the
   wrong tag form, and the decider never judging the paper because the run ended with scope-downs open.
-- Panels that read the machine live (the overview's slots and load) show the machine that built the showcase.
+- The overview's machine panel (slots, load, memory, GPU) shows the run's workstation as it read when the snapshot was
+  made, after the run, with no job running.
 
 ## Where to look
 

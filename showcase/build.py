@@ -8,7 +8,9 @@ recordings, and `app.js`, `style.css`, and `vendor/` as they are. So the showcas
 built from: `.github/workflows/showcase.yml` builds and publishes it on every push to master, and
 `tests/test_showcase.py` fails when the server gains a GET route `COVERAGE` does not account for, or a view stops
 answering over the snapshot. Nothing in the showcase writes: `replay.js` refuses a POST, and the page, opened without
-the dashboard's token, keeps its buttons and the chat off and says why.
+the dashboard's token, keeps its buttons and the chat off and says why. Two things are the run's rather than the
+building machine's: the project's path, and the overview's slots, which are the reading the run's workstation gave when
+the snapshot was made (`toy.json`).
 
 `python3 -m showcase.build --snapshot <project>` makes the archive again from a finished project, serving it the same
 way and keeping every file the views read, beside the paper, the plots and figures, the built documentation site, and
@@ -19,6 +21,7 @@ anything matches a secret's pattern is refused.
 """
 
 import argparse
+import copy
 import datetime
 import http.client
 import io
@@ -34,7 +37,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit
 
-from wayline import TAG, chat, dashboard_views, docs, sections
+import wayline.project
+from wayline import TAG, chat, dashboard_views, docs, resources, sections
 from wayline.dashboard import LOOPBACK, STATIC_ROOT, make_server
 from wayline.project import register, set_active
 
@@ -92,6 +96,8 @@ SMALL_RESULT = 64 * 1024  # a JSON file under `results/` is kept up to this size
 NEVER_NAMES = frozenset({"stream.jsonl", "stderr.txt", "env.json", "settings.json", "pid", ".env"})
 NEVER_ROOTS = (".git/", ".worktrees/", ".wayline/", ".claude/")
 KEPT_CACHE = (docs.HTML_DIR.as_posix() + "/", docs.CHECKS_JSON.as_posix())
+# Where the build extracts the snapshot; no recording may name it (`tests/test_showcase.py`).
+SCRATCH_PREFIX = "wayline-showcase-build-"
 SECRET = re.compile(rb"sk-ant-[a-z0-9]{2,8}-[A-Za-z0-9_\-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|"
                     rb"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|-----BEGIN (?:[A-Z]+ )?PRIVATE KEY|"
                     rb"CLAUDE_CODE_OAUTH_TOKEN\s*=\s*['\"]?[A-Za-z0-9_\-]{30,}")
@@ -110,12 +116,18 @@ def tail_lines():
 
 
 @contextmanager
-def served(project, home):
+def served(project, home, machine=None):
     """The dashboard serving `project` alone on a loopback port, under `home` as `~/.wayline`; yields `get(path)`,
-    which returns `(status, headers, body)`. No message of the chat is answered, so no model runs."""
-    saved_home, saved_start = os.environ.get("WAYLINE_HOME"), chat.start
+    which returns `(status, headers, body)`. No message of the chat is answered, so no model runs. `machine`, when
+    given, is the slots and reservation the overview shows in place of this machine's live reading."""
+    if not hasattr(wayline.project, "resources_snapshot"):
+        raise ShowcaseError("wayline.project no longer reads the machine through resources_snapshot, where the "
+                            "showcase puts the run's own reading")
+    saved_home, saved_start, saved_reading = os.environ.get("WAYLINE_HOME"), chat.start, wayline.project.resources_snapshot
     os.environ["WAYLINE_HOME"] = str(home)
     chat.start = lambda *args, **kwargs: False
+    if machine is not None:
+        wayline.project.resources_snapshot = lambda *args, **kwargs: copy.deepcopy(machine)
     server = None
     try:
         register(project, TAG)
@@ -138,7 +150,7 @@ def served(project, home):
         if server is not None:
             server.shutdown()
             server.server_close()
-        chat.start = saved_start
+        chat.start, wayline.project.resources_snapshot = saved_start, saved_reading
         if saved_home is None:
             os.environ.pop("WAYLINE_HOME", None)
         else:
@@ -255,9 +267,9 @@ def _banner(files):
     links += [["about this run", REPOSITORY + "/tree/master/showcase#readme"], ["wayline on GitHub", REPOSITORY]]
     return {
         "title": "A read-only showcase.",
-        "text": "This is wayline's own dashboard over the toy run of October 24 to 25, 2026: an hour's setup "
-                "conversation, an autonomous run through the night, and a compiled paper the next afternoon. It is "
-                "rebuilt with the current interface whenever the interface changes; the buttons and the chat are off.",
+        "text": "wayline's own dashboard over a toy run of October 24 to 25, 2026: an hour's setup, an autonomous night, "
+                "and a compiled paper the next afternoon. Rebuilt whenever the interface changes; the buttons and the "
+                "chat are off.",
         "links": links,
     }
 
@@ -271,18 +283,23 @@ def build(out, archive=ARCHIVE, about=ABOUT):
             raise ShowcaseError("%s holds files and no showcase.json; the showcase writes only into its own directory" % out)
         shutil.rmtree(out)
     about = _about(about)
-    with tempfile.TemporaryDirectory(prefix="showcase-") as scratch:
+    with tempfile.TemporaryDirectory(prefix=SCRATCH_PREFIX) as scratch:
         scratch = Path(scratch)
         with tarfile.open(archive) as tar:
             tar.extractall(scratch, filter="data")
         project = scratch / PROJECT
-        with served(project, scratch / "home") as get:
+        with served(project, scratch / "home", machine=(about.get("machine") or {}).get("view")) as get:
             answers = crawl(get, project)
+        # The project where the run kept it, rather than where this build extracted it.
+        where = [(path.encode(), about.get("source", PROJECT).encode())
+                 for path in sorted({str(project), str(project.resolve())}, key=len, reverse=True)]
         out.mkdir(parents=True)
         recordings, tags = {}, {}
         (out / "r").mkdir()
         for number, path in enumerate(sorted(answers)):
             status, headers, body = answers[path]
+            for scratch_path, kept_path in where:
+                body = body.replace(scratch_path, kept_path)
             kind = headers.get("content-type", "text/plain")
             name = "r/%d%s" % (number, ".json" if "json" in kind else ".svg" if "svg" in kind else ".txt")
             (out / name).write_bytes(body)
@@ -382,11 +399,17 @@ def snapshot(source, archive=ARCHIVE, about=ABOUT):
             path = transcript.relative_to(source).as_posix()
             tar.addfile(_entry(path, 0, transcript.stat().st_mtime), io.BytesIO(b""))
     kept_results = {path for path in chosen if path.startswith("results/")}
+    machine = resources.snapshot(json.loads((source / "harness.json").read_text(encoding="utf-8")), [])
+    for gpu in machine["gpus"]:
+        gpu["uuid"] = ""  # a hardware identifier, which no view shows
     record = {
         "what": "The M8 toy run (ticket 122): wayline's v1.1.0 line, before its release, under autonomous on a synthetic "
                 "two-class question, October 24 to 25, 2026. Recorded in docs/verification/m8.md, section \"The toy "
                 "overnight on v1.1.0\".",
         "made": datetime.date.today().isoformat(),
+        "source": "~/" + source.relative_to(Path.home()).as_posix() if source.is_relative_to(Path.home()) else str(source),
+        # The overview's slots as the run's own workstation read them when the snapshot was made, with no job running.
+        "machine": {"read_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), "view": machine},
         "files": len(chosen),
         "bytes": total,
         "left_out": {
@@ -394,7 +417,7 @@ def snapshot(source, archive=ARCHIVE, about=ABOUT):
             "results": {"count": len(results) - len(kept_results),
                         "bytes": sum(path.stat().st_size for path in results) - sum((source / path).stat().st_size for path in kept_results)},
         },
-        "scrubbed": {"harness.json": ["owner_email", "notify"]},
+        "scrubbed": {"harness.json": ["owner_email", "notify"], "machine": ["each GPU's uuid"]},
     }
     Path(archive).write_bytes(written.getvalue())
     Path(about).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
