@@ -33,6 +33,11 @@ refuses a project made before it, which keeps its old tag or starts again on the
 project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
 lists it read-only, marked with its tag.
 
+- The ticket graph draws a ticket blocked by two tickets one of which blocks the other (`dag._layers`). The layering
+  pushed every pending parent at once and took a parent still waiting for its sibling's sake for a cycle, so the
+  dashboard's graph of the M8 toy run (ticket 96 blocked by 115 and 116, and 116 by 115) answered 500, "the edges form
+  a cycle through node 115". It now lays out one parent at a time, so the stack is the path and only a real cycle
+  raises.
 - The harness's user guide (ticket 124), in place of the documentation site the M8 tickets named: Markdown under
   `docs/guide/`, readable on GitHub, its index linked from `README.md`, one page per topic (getting started, talking
   with a project, objectives and goals, starting midway, the research, the paper, the run, software and environments,

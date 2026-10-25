@@ -52,6 +52,13 @@ class LayoutTest(unittest.TestCase):
         with self.assertRaises(dag.DagError):
             dag.layout([1, 2, 3], [(1, 2), (2, 3), (3, 1)])
 
+    def test_a_node_blocked_by_two_nodes_one_of_which_blocks_the_other_is_no_cycle(self):
+        # The toy run's graph: ticket 96 blocked by 115 and 116, and 116 by 115. 115 waits on the stack for 96's sake
+        # while 116 is laid out, which is no path back to 116.
+        pos, _ = dag.layout([1, 2, 3], [(3, 1), (2, 1), (3, 2)])
+        self.assertLess(pos[3][1], pos[2][1])
+        self.assertLess(pos[2][1], pos[1][1])
+
 
 class SvgTest(unittest.TestCase):
     def status_of(self, nodes, frontier=()):
