@@ -33,7 +33,7 @@ What the run finds wrong is filed as follow-up tickets rather than fixed here.
 - [ ] A fresh toy project on v1.1.0 (`research_version` 2) is set up in one conversation under `autonomous`, with its goal as an objective with a measure and `stop_when` in `harness.json`; nothing reads a GOAL.json.
 - [ ] The overnight run reaches the goal by keep-if-better, answers its real question, draws the changed results at the run end, renders `REPORT.md`, the current reports, and `ACCOUNT.md` by code, and ends on its stopping rule with a single end notice.
 - [ ] The decider judges the order, orders the paper, and the paper compiles to a PDF, a `.docx`, and venue LaTeX under `compilations/`.
-- [ ] The chat answers a message from the phone through the tunnel and a card is confirmed; the five views and the marks view are checked at phone width; both recorded.
+- [x] The chat answers a message from the phone through the tunnel and a card is confirmed; the five views and the marks view are checked at phone width; both recorded.
 - [x] A v1.0.x project under v1.1.0: `run` and `tick` refuse with decision 17's message, and `wayline upgrade --to v1.0.1` restores the shared checkout; recorded.
 - [x] `docs/verification/m8.md` holds the journal excerpts, counts, and commands of the run; `~/wayline-m7/toy/` is unchanged.
 - [x] Anything the run found wrong is filed as a follow-up ticket and named in the pull request.
