@@ -1,0 +1,22 @@
+{
+  "what": "The M8 toy run (ticket 122): wayline's v1.1.0 line, before its release, under autonomous on a synthetic two-class question, October 24 to 25, 2026. Recorded in docs/verification/m8.md, section \"The toy overnight on v1.1.0\".",
+  "made": "2026-10-25",
+  "files": 2287,
+  "bytes": 18252599,
+  "left_out": {
+    "transcripts": {
+      "count": 620,
+      "bytes": 198442812
+    },
+    "results": {
+      "count": 732,
+      "bytes": 114109124
+    }
+  },
+  "scrubbed": {
+    "harness.json": [
+      "owner_email",
+      "notify"
+    ]
+  }
+}
