@@ -33,19 +33,28 @@ refuses a project made before it, which keeps its old tag or starts again on the
 project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
 lists it read-only, marked with its tag.
 
-- Four small things the toy run showed (ticket 140). The general report's `report_rendered` counts its claims when it
-  renders offline, as the conductor and the tick do: a sentence the classifier has not read that ends with a tag other
-  than `doc` counts as a claim and a tagged one (the toy's night journaled `claims: 0` for 175 tagged findings). The
-  GPU hours (`stopping.gpu_hours`, which `status`, the account, and the budget read) count each job from its
-  `job_launched` to its end as the journal holds them, never a `job_finished`'s `seconds`, so the reading never goes
-  down (it read 1.8, then 1.3, then 1.45); a job counts until the conductor journals its end. The decider's "goal"
-  class no longer catches work that names a goal ("set the goal run's auroc beside E2's mean", which became a
-  human-only decision ticket): a goal or measure word naming the run, result, plot, or file it belongs to is not the
-  change's object. And a ticket's `resources.gpu_mem_gb` declares the GPU memory one job needs: jobs that declare it
-  share a card while every declared need on it fits the card's total over the reservation's and the memory read free
-  covers the jobs placed in the same wave, under the utilization rule and the OOM ladder as they stand; the job file
-  records it in `devices.gpu_mem_gb`, a job that declares none still takes its GPUs whole, and a declaration larger
-  than any card fails the ticket at once.
+- The general report counts its claims offline (ticket 140; Implementation Decisions 9 and 17). An offline render, as
+  the conductor and the tick make, counts a sentence of `REPORT.md` the classifier has not read that ends with a tag
+  other than `doc` as a claim, and a tagged one, in its `report_rendered`; the toy's night journaled `claims: 0` for
+  175 tagged findings. The count is an upper bound until the classifier reads those sentences, and one it reads as no
+  claim leaves it. Sections, results, and the paper, linted by passage, count only what the classifier read.
+- GPU hours never go down (ticket 140; Implementation Decisions 6 and 17). `stopping.gpu_hours`, which `status`, the
+  account, and the budget read, reads the job files (`stopping.job_records`) and counts each attempt from its
+  `job_launched` to the `ended_at` the poll that saw its process gone wrote, else the journal's end of it, else now;
+  a `job_finished`'s `seconds` is no longer read. On the toy the reading had gone 1.8, 1.3, 1.45; replayed, it now only
+  grows, to 3.9 hours, and being journaled late no longer counts as holding the GPU.
+- Work that names a goal is no longer refused as "goal" (ticket 140; Implementation Decision 17). The decider's code
+  check took "set the goal run's auroc beside E2's mean", an analysis, for a change of the goal, and turned the toy's
+  parked proposal into a human-only decision ticket. A goal word that names its run, job, result, plot, or file, or a
+  measure or target word in a possessive naming a run, a section, or a plot, is not what the change acts on; the
+  measure's parts after the work they belong to ("the goal run's target"), the eval command with its script, and "the
+  measure file" or "the target result" are still refused.
+- Jobs share a GPU by declared memory (ticket 140; Implementation Decision 6). A ticket's `resources.gpu_mem_gb`
+  declares the GPU memory one job needs. Jobs that declare it share a card while every declared need on it fits the
+  card's total less the reservation's GPU memory and the memory read free covers the jobs placed in the same wave,
+  under the utilization rule and the OOM ladder as they stand; a job that declares none still takes its GPUs whole.
+  The job file records `devices.gpu_mem_gb` and the card's `gpu_total_gb`, and such a job counts that share of the card
+  in its GPU hours. A declaration more than any card can give over the reservation fails the ticket at once.
 - The public showcase (`showcase/`): the dashboard over the M8 toy run as a static site on GitHub Pages, and the
   repository under the MIT license (`LICENSE`), with a `README.md` for a reader new to wayline. `python3 -m
   showcase.build <out>` serves a snapshot of the run (`showcase/toy.tar.xz`: what the views read, the paper, the plots

@@ -496,6 +496,14 @@ class LinterFailureTest(RunCase):
         self.assertEqual((payload["claims"], payload["tagged"], payload["linter_pass"]), (5, 5, True))
         self.assertIn("The provenance linter passed: 5 claim sentence(s), 5 tagged.", self.text())
 
+    def test_only_the_general_report_counts_an_unread_tagged_sentence_as_a_claim(self):
+        """Sections, results, and the paper are linted by passage, and count only what the classifier read (ticket 140)."""
+        passage = {"id": "p1", "by": "worker", "text": "Pairwise terms raise the AUROC to 0.861.{res:t3-a1/results/interactions/summary.json#auroc_mean}"}
+        linted = provenance.lint_passages(self.project, [passage], {})
+        self.assertEqual((linted.claims, linted.tagged), (0, 0))
+        report = provenance.lint(self.project, passage["text"] + "\n", {})
+        self.assertEqual((report.claims, report.tagged), (1, 1))
+
     def test_a_tagged_sentence_the_classifier_read_as_no_claim_is_not_counted(self):
         self.render()
         cache = read_claims_cache(self.project)

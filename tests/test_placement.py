@@ -151,8 +151,14 @@ class SharedCardTest(unittest.TestCase):
 
     def test_more_gpu_memory_than_any_card_holds_can_never_be_placed(self):
         self.assertEqual(resources.never_fits(dict(GPU_JOB, gpu_mem_gb=30), machine.recorded()),
-                         "it asks for 30 GB of GPU memory and the largest GPU here has 24 GB")
+                         "it asks for 30 GB of GPU memory and the largest GPU here has 24 GB outside the reservation")
         self.assertIsNone(resources.never_fits(dict(GPU_JOB, gpu_mem_gb=20), machine.recorded()))
+        owner = machine.recorded()
+        owner["reservation"] = Reservation(cores=frozenset(range(8)), extra_gpu_mib=6144)
+        self.assertEqual(resources.never_fits(dict(GPU_JOB, gpu_mem_gb=20), owner),
+                         "it asks for 20 GB of GPU memory and the largest GPU here has 18 GB outside the reservation",
+                         "a need between the card's total and its total over the reservation would wait forever")
+        self.assertIsNone(resources.never_fits(dict(GPU_JOB, gpu_mem_gb=18), owner))
 
     def test_a_reserved_or_busy_card_is_never_shared(self):
         reserved = machine.recorded()

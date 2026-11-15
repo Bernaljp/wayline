@@ -134,6 +134,42 @@ class BudgetTest(ProjectTestCase):
         # Each GPU job counts from its launch to its end as the journal has them: 14m22.6s and 24m26.5s on one GPU.
         self.assertAlmostEqual(readings[-1], (862.622 + 1466.539) / 3600.0, places=6)
 
+    def test_a_job_counts_to_its_process_end_when_the_journal_notices_it_later(self):
+        """Being journaled late is not holding the GPU (ticket 140's review): the tick's poll writes the attempt's
+        `ended_at` when it sees the process gone, and the conductor journals `job_finished` an hour on. Replayed with the
+        job file as it stood at each moment, the hours never go down and stop at the poll."""
+        gpu = ["GPU-a"]
+        events = [
+            event("job_launched", {"ticket": 1, "gpu_uuids": gpu, "attempt": 1}, "2026-10-24T19:48:39.000Z", job="t1-1"),
+            event("job_finished", {"exit_code": 0, "seconds": 738, "outputs_ok": True}, "2026-10-24T20:49:16.000Z", job="t1-1"),
+        ]
+        polled = "2026-10-24T20:00:57.000Z"  # where the tick's poll wrote ended_at: 738 s after the launch
+
+        def files(now):
+            ended = polled if now >= at(polled) else None
+            return {"t1-1": {"id": "t1-1", "devices": {"gpu_uuids": gpu, "gpu_indices": [0], "cores": [8], "ram_gb": 4},
+                             "attempts": [{"n": 1, "started_at": "2026-10-24T19:48:39.000Z", "ended_at": ended}]}}
+
+        readings = []
+        for now in range(int(at("2026-10-24T19:48:39Z")), int(at("2026-10-24T21:00:00Z")), 60):
+            journal = [record for record in events if at(record["ts"]) <= now]
+            readings.append(stopping.gpu_hours(journal, now, files(now)))
+        self.assertEqual(readings, sorted(readings), "a spent budget never goes down")
+        self.assertAlmostEqual(readings[-1], 738 / 3600.0)
+        self.assertAlmostEqual(stopping.gpu_hours(events, at("2026-10-24T21:00:00Z")), 3637 / 3600.0,
+                               msg="without the job files, the journal's end is the fallback")
+
+    def test_a_job_that_shares_a_card_counts_its_share_of_it(self):
+        """A job that declared `gpu_mem_gb` counts its declared memory over the card's total, at most 1; one that held the
+        card whole counts 1 a GPU (ticket 140's review): twelve 2 GB jobs on a 24 GB card spend one card's hours."""
+        events = [event("job_launched", {"ticket": 1, "gpu_uuids": ["GPU-a"], "attempt": 1}, "2026-10-01T10:00:00.000Z", job=job)
+                  for job in ("light", "heavy", "whole")]
+        devices = {"gpu_uuids": ["GPU-a"], "gpu_indices": [0], "cores": [8], "ram_gb": 4}
+        jobs = {"light": {"devices": dict(devices, gpu_mem_gb=2, gpu_total_gb=24), "attempts": [{"n": 1, "ended_at": None}]},
+                "heavy": {"devices": dict(devices, gpu_mem_gb=30, gpu_total_gb=24), "attempts": [{"n": 1, "ended_at": None}]},
+                "whole": {"devices": devices, "attempts": [{"n": 1, "ended_at": None}]}}
+        self.assertAlmostEqual(stopping.gpu_hours(events, at("2026-10-01T13:00:00Z"), jobs), 3 * (2 / 24 + 1 + 1))
+
     def test_a_budget_is_spent_at_its_limit_and_none_is_no_limit(self):
         events = [event("run_started", {"resume": False, "harness_tag": "v1.1.0", "autonomy": "autonomous", "radius": "moderate",
                                         "pid": 1}, "2026-10-01T10:00:00.000Z"),

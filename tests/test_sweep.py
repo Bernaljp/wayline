@@ -16,9 +16,11 @@ from tests import machine
 from tests.paths import FIXTURES_DIR
 from tests.projects import ProjectTestCase
 from tests.test_conductor import hold_the_ladder
-from wayline import project, provenance, replay, resources, tickets, worker
+from wayline import project, provenance, replay, resources, stopping, tickets, worker
 from wayline.conductor import Conductor
 from wayline.ledger import Ledger
+from wayline.pacing import epoch
+from wayline.project import read_harness
 from wayline.resources import JobState
 
 SWEEP = FIXTURES_DIR / "projects" / "sweep"
@@ -372,7 +374,15 @@ class SharedCardTest(SweepCase):
         self.assertEqual(self.launched_together(), ["t1-1", "t1-2", "t1-3"])
         for spec, indices in self.launched:
             self.assertEqual((indices, spec.gpu_uuids), ((0,), (machine.GPU_UUID,)))
-        self.assertEqual({self.job(job)["devices"]["gpu_mem_gb"] for job in RATES}, {2})
+        self.assertEqual({(self.job(job)["devices"]["gpu_mem_gb"], self.job(job)["devices"]["gpu_total_gb"]) for job in RATES},
+                         {(2, 24)}, "the declaration and the card's total, which the GPU hours read the share from")
+        files = stopping.job_records(self.project)
+        whole = {job: dict(record, devices={key: value for key, value in record["devices"].items() if key != "gpu_mem_gb"})
+                 for job, record in files.items()}
+        now = epoch(self.events()[-1]["ts"])
+        self.assertAlmostEqual(stopping.gpu_hours(self.events(), now, files), stopping.gpu_hours(self.events(), now, whole) * 2 / 24)
+        self.assertEqual(project.stopping_view(read_harness(self.project), self.events(), now, files)["budgets"]["gpu_hours"]["used"],
+                         round(stopping.gpu_hours(self.events(), now, files), 2))
         self.assertEqual(project.read_jobs(self.project)[1], [], "every job file validates")
         self.assertNotIn("job_waiting", self.names())
         self.assertEqual(self.by_job("job_retried")["t1-3"][0]["oom"], "gpu", "the OOM ladder stands on a shared card")

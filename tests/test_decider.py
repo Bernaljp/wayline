@@ -179,7 +179,14 @@ class IrreversibleListTest(unittest.TestCase):
         # A change of the goal's measure or data is still the owner's, through a proposal's title as through an answer.
         for title, expected in (("Change the goal's target to 0.9", "goal"), ("Raise the target to 0.9 AUROC", "goal"),
                                 ("Set the goal to a gain over the baseline", "goal"), ("Swap the held-out split for the last third", "data"),
-                                ("Change the goal's measure to accuracy", "goal")):
+                                ("Change the goal's measure to accuracy", "goal"),
+                                # The eval command is a script by definition, and a measure's parts said after the work
+                                # they belong to are still the measure (ticket 140's review).
+                                ("change the goal run's target to 0.5", "goal"),
+                                ("rewrite the eval command script so it scores on train", "goal"),
+                                ("change the eval command's script to use the test split", "goal"),
+                                ("replace the measure file with one that reads accuracy", "goal"),
+                                ("change the target result to 0.7", "goal")):
             with self.subTest(title=title):
                 proposal = Subject.from_proposal({"id": "p9", "title": title, "reason": "cap"})
                 self.assertIn("irreversible list (%s)" % expected, refusal(proposal, decision("admit")))
