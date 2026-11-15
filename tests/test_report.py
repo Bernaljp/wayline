@@ -484,11 +484,35 @@ class LinterFailureTest(RunCase):
         self.assertNotIn("[^", banner)
         self.assertEqual(self.report_events()[-1]["payload"]["linter_pass"], False)
 
-    def test_an_offline_first_render_launches_nothing_and_classifies_nothing(self):
+    def test_an_offline_first_render_launches_nothing_and_still_counts_the_reports_claims(self):
+        """The conductor and the tick render offline (ticket 140): the toy's night journaled `claims: 0` for a report
+        of 175 tagged findings. A sentence ending with a provenance tag the classifier has not read is counted as a
+        claim, and a tagged one, since nothing says it is not one."""
         rendered = self.render(offline=True)
         self.assertEqual(self.calls, [])
-        self.assertEqual(rendered.lint.claims, 0, "nothing was classified")
+        self.assertEqual(self.classifier.batches, [], "nothing was classified")
         self.assertTrue(rendered.lint.passed, "every finding ends with its provenance tags")
+        payload = self.report_events()[-1]["payload"]
+        self.assertEqual((payload["claims"], payload["tagged"], payload["linter_pass"]), (5, 5, True))
+        self.assertIn("The provenance linter passed: 5 claim sentence(s), 5 tagged.", self.text())
+
+    def test_only_the_general_report_counts_an_unread_tagged_sentence_as_a_claim(self):
+        """Sections, results, and the paper are linted by passage, and count only what the classifier read (ticket 140)."""
+        passage = {"id": "p1", "by": "worker", "text": "Pairwise terms raise the AUROC to 0.861.{res:t3-a1/results/interactions/summary.json#auroc_mean}"}
+        linted = provenance.lint_passages(self.project, [passage], {})
+        self.assertEqual((linted.claims, linted.tagged), (0, 0))
+        report = provenance.lint(self.project, passage["text"] + "\n", {})
+        self.assertEqual((report.claims, report.tagged), (1, 1))
+
+    def test_a_tagged_sentence_the_classifier_read_as_no_claim_is_not_counted(self):
+        self.render()
+        cache = read_claims_cache(self.project)
+        first = prose_sentences(restore_tags(self.text()))[0]
+        cache[sentence_hash(first.text)] = provenance.METHOD_DESCRIPTION
+        self.book.write_json(provenance.CLAIMS_CACHE, {"classes": cache})
+        self.render(offline=True)
+        payload = self.report_events()[-1]["payload"]
+        self.assertEqual((payload["claims"], payload["tagged"]), (4, 4))
 
 
 REFUSED = Envelope(subtype="success", rate_limit_events=[
@@ -503,7 +527,8 @@ class UsageLimitTest(RunCase):
             self.calls = list(fake.calls)
         self.assertEqual([call.kind for call in self.calls if call.request.role == "classifier"], ["launch"])
         self.assertIn("classifier", " ".join(rendered.notes))
-        self.assertEqual(rendered.lint.claims, 0)
+        self.assertEqual(read_claims_cache(self.project), {}, "nothing was classified")
+        self.assertEqual((rendered.lint.claims, rendered.lint.tagged), (5, 5), "the findings' tags still count them")
         self.assertIn("seven_day_overage_included", self.text().split("## 1.")[0])
 
 

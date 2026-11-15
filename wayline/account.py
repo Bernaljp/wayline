@@ -138,6 +138,7 @@ class _Context:
     bodies: dict
     now: float
     notes: list = field(default_factory=list)
+    jobs: dict = field(default_factory=dict)  # the job files by id, which the GPU hours read (`stopping.job_records`)
 
 
 def _context(project, now=None, events=None):
@@ -160,7 +161,8 @@ def _context(project, now=None, events=None):
         notes.append("the tickets could not be read: %s" % failure)
     if now is None:
         now = _resting_now(events)
-    return _Context(project, events, harness, by_id, bodies, now, notes)
+    from wayline import stopping  # the stopping module imports the goal module, which imports the gates
+    return _Context(project, events, harness, by_id, bodies, now, notes, jobs=stopping.job_records(project))
 
 
 def _resting_now(events):
@@ -292,9 +294,10 @@ def _waiting(context):
     from wayline.schedule import awaits_owner
     autonomy = context.harness.get("autonomy")
     decider = decider_ready(project=context.project)
+    answers = replay.replay(context.events).answers  # one the journal answered is done, whatever its file says (ticket 131)
     lines = []
     for number in sorted(context.tickets):
-        fields = context.tickets[number]
+        fields = tickets.answered_entry(context.tickets[number], answers)
         if tickets.is_open_decision(fields) and awaits_owner(fields, autonomy, decider):
             lines.append("- Decision ticket %d%s: %s %s" % (
                 number, " (human only)" if fields.get("human_only") else "",
@@ -547,7 +550,7 @@ def _wall_hours(run, events, now):
     return 0.0 if start is None or end is None else max(0.0, end - start) / 3600.0
 
 
-def _gpu_hours(run, events, now):
+def _gpu_hours(run, events, now, jobs=None):
     """The GPU hours spent during the run, counted as the GPU budget counts them (`stopping.gpu_hours`): a job carried
     over from an earlier run counts its hours in this one, and a job that failed counts too."""
     from wayline import stopping  # the stopping module imports the goal module, which imports the gates
@@ -555,7 +558,7 @@ def _gpu_hours(run, events, now):
     if start is None or end is None:
         return 0.0
     stop = run.end + 1 if run.end is not None else run.after
-    return max(0.0, stopping.gpu_hours(events[:stop], end) - stopping.gpu_hours(events[:run.start], start))
+    return max(0.0, stopping.gpu_hours(events[:stop], end, jobs) - stopping.gpu_hours(events[:run.start], start, jobs))
 
 
 def _waves(span):
@@ -578,7 +581,7 @@ def _latest_run(run, context):
         ending = "ended %s: %s (`%s`)" % (_when(events[run.end].get("ts")), REASONS.get(reason, "no reason was journaled"), reason)
     lines = ["### Run %d, the latest" % run.number, "",
              "Started %s, %s; %d wave(s). Wall clock %.1f hours; GPU %.2f hours." % (
-                 _when(started.get("ts")), ending, _waves(span), _wall_hours(run, events, context.now), _gpu_hours(run, events, context.now))]
+                 _when(started.get("ts")), ending, _waves(span), _wall_hours(run, events, context.now), _gpu_hours(run, events, context.now, context.jobs))]
     peaks = _peaks(span)
     if peaks:
         lines[-1] += " Peak utilization: %s." % ", ".join("%s %s" % (window, _number(value)) for window, value in sorted(peaks.items()))
@@ -720,7 +723,7 @@ def _earlier_runs(runs, context):
             run.number, _when(context.events[run.start].get("ts")), _when(end.get("ts")) if end else "never journaled",
             (end.get("payload") or {}).get("reason") if end else "none", _waves(span),
             sum(1 for entry in per.values() if entry["outcome"] in ("done", "accepted")), sum(entry["turns"] for entry in per.values()),
-            _wall_hours(run, context.events, context.now), _gpu_hours(run, context.events, context.now)))
+            _wall_hours(run, context.events, context.now), _gpu_hours(run, context.events, context.now, context.jobs)))
     return lines
 
 
@@ -887,9 +890,9 @@ def _stands(context):
     parts.append("Stopping rule: %s." % stopping.describe_rule(stopping.rule_of(context.harness)))
     budgets = context.harness.get("budgets") or {}
     used = {"wallclock_hours": stopping.wallclock_hours(context.events, context.now),
-            "gpu_hours": stopping.gpu_hours(context.events, context.now)}
+            "gpu_hours": stopping.gpu_hours(context.events, context.now, context.jobs)}
     words = {"wallclock_hours": "wall clock", "gpu_hours": "GPU"}
-    spent = {name for name, _, _ in stopping.spent(context.harness, context.events, context.now)}
+    spent = {name for name, _, _ in stopping.spent(context.harness, context.events, context.now, context.jobs)}
     shown = []
     for name in stopping.BUDGETS:
         limit = budgets.get(name)

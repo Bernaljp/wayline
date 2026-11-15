@@ -3170,7 +3170,7 @@ class Conductor:
         if not stopping.stated(harness):
             return None, None
         events, _ = self.ledger.read_events()
-        found = stopping.spent(harness, events, self.clock())
+        found = stopping.spent(harness, events, self.clock(), stopping.job_records(self.project))
         if not found:
             return None, None
         return stopping.BUDGET_SPENT, stopping.describe_spent(found)
@@ -3640,9 +3640,8 @@ class Conductor:
             current = self._runner().read(placement.job)
             if current is None or current.get("status") != "pending" or not self._is_owed(current):
                 continue  # its ticket failed a moment ago, and the job was cancelled with it
-            record = dict(by_id[placement.job], devices={
-                "gpu_uuids": list(placement.gpu_uuids), "gpu_indices": list(placement.gpu_indices),
-                "cores": list(placement.cores), "ram_gb": placement.ram_gb})
+            # With the GPU memory a job declared (ticket 140), which the next placement reads its card as shared by.
+            record = dict(by_id[placement.job], devices=placement.devices())
             if self._launch_job(record, resources.effective_overrides(record), {}, placement.gpu_indices) is not None:
                 self.say("  job %s (ticket %d) launched on %s, cores %s" % (
                     placement.job, record["ticket"], "GPU %s" % ",".join(map(str, placement.gpu_indices)) if placement.gpu_indices else "no GPU",
