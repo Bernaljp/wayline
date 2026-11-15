@@ -22,4 +22,4 @@ On the toy's live paper order (ticket 122, `docs/verification/m8.md`), the indep
 
 - [x] The availability statements and the supplement's numbering, covered over a composed fixture paper.
 - [x] Intake's sorting of an e-print tarball, covered over a temporary project.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
