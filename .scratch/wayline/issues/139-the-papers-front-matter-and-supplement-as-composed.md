@@ -14,12 +14,12 @@ On the toy's live paper order (ticket 122, `docs/verification/m8.md`), the indep
 
 **Blocked by:** None - can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#346](https://github.com/Bernaljp/wayline/issues/346) (mirror; the local file is the source)
 
 **Milestone:** after M8 (v1.1.x). **Spec:** Implementation Decision 17 (the paper order and what it compiles; the front matter; methods and the code), 13 (intake); ticket 122's live record.
 
-- [ ] The availability statements and the supplement's numbering, covered over a composed fixture paper.
-- [ ] Intake's sorting of an e-print tarball, covered over a temporary project.
-- [ ] `python -m unittest` passes.
+- [x] The availability statements and the supplement's numbering, covered over a composed fixture paper.
+- [x] Intake's sorting of an e-print tarball, covered over a temporary project.
+- [x] `python -m unittest` passes.

@@ -64,6 +64,24 @@ lists it read-only, marked with its tag.
   `showcase` workflow builds it on every pull request and opens every view in Chrome, keeping screenshots, and
   publishes it on every push to master, so it shows the interface master has; `tests/test_showcase.py` fails on a
   GET route `COVERAGE` does not account for, and `tests/test_showcase_browser.py` on a request no recording answers.
+- The paper's front matter and supplement as composed (ticket 139; Implementation Decision 17).
+  - Code availability says in a sentence what the code repository reproduces and each Methods method it does not,
+    where the Methods names it and why, where it had printed the code-to-Methods record's entries as Python dict
+    literals. It claims nothing before setup settles a code repository or while the Methods names no method, and a
+    check that could not run leaves a marked placeholder instead of the claim.
+  - Supplementary figures and tables are numbered once each, in order of first citation through the parts as
+    composed (an item no part cites after the cited ones, in the plan's order), each with its own `.md` and `.csv`;
+    the writer's citations are renumbered with them, and a part kept from the last version is read by that version's
+    numbers. Two tables of one result had shared one number (both `ST3` in the M8 toy's paper, one file pair written
+    and the inherited results' table numbered past a gap).
+  - Intake files an e-print (a paper's LaTeX source as arXiv serves it: a tarball, or a single gzipped `.tex`) under
+    the references, never the data: by the arXiv id in arXiv's name for it, else by its LaTeX title, else as
+    `E-print: <path>`, a file absorb never asks a service about; given as a material, a `--data` pointer, a
+    `--reference`, or a dashboard drop alike. Only a file's first 64 MiB are looked into, so a tarball whose LaTeX
+    document lies past them is data.
+  - Data availability is written only from what the work read: an `INTAKE.md` Data line is named when a run the
+    current findings cite named its file (or a file under its directory) on its command line
+    (`reproduce.read_paths`); a pointer in words, data no cited run read, and an e-print never are.
 - The plotter writes the harness's tag form (ticket 135; Implementation Decisions 9 and 17). The plotter's prompt
   states it, `{res:<run-id>/<artifact>#<locator>}` with an example at a drawing's `numbers.json`; on the M8 toy run
   drawings R4 and R5 wrote `[res:...]`, which the linter does not read, and failed as untagged claims twice. The

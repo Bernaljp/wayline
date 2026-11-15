@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
-from tests.test_paper import PaperCase, Writer, asked, close_as_passed
+from tests.test_paper import PaperCase, Writer, assert_no_record_text, asked, close_as_passed
 from wayline import batches, figure_checks, figure_role, paper, paper_figures, worker
 from wayline.worker import Envelope
 
@@ -123,6 +123,13 @@ class PlanTest(FiguresCase):
         self.drawn("R1", [(1, "keep")], tables=[(1, "keep"), (2, None)])
         plan = paper_figures.build(self.project)
         self.assertEqual([(item["id"], item["plot"]) for item in plan["tables"]], [("T1", "R1.T1"), ("ST1", "R1.T2")])
+
+    def test_a_result_holding_two_tables_numbers_each_once_in_outline_order(self):
+        self.drawn("R1", [(1, "keep")], tables=[(1, "keep"), (2, "keep"), (3, None), (4, None)])
+        self.drawn("R3", [(1, "keep")], tables=[(1, None)])
+        plan = paper_figures.build(self.project)
+        self.assertEqual([(item["id"], item["plot"]) for item in plan["tables"]],
+                         [("T1", "R1.T1"), ("T2", "R1.T2"), ("ST1", "R1.T3"), ("ST2", "R1.T4"), ("ST3", "R3.T1")])
 
     def test_a_table_whose_csv_is_gone_is_left_out_before_the_tables_are_numbered(self):
         self.drawn("R1", [(1, "keep")], tables=[(1, "keep"), (2, "keep")])
@@ -418,14 +425,14 @@ class ComposeFiguresTest(PlannedFigureCase):
         super().setUp()
         self.drawn("R1", [(1, "keep"), (2, "keep"), (3, None)], tables=[(1, "keep")])
 
-    def compose_with_figures(self, figures=2, verdicts=None):
+    def compose_with_figures(self, figures=2, verdicts=None, change=renumbered):
         payload = paper.open_order(self.project)
         if payload is None:
             paper.order(self.project, start=None)
             payload = paper.open_order(self.project)
         if payload.get("batch"):
             batches.take_defaults(self.project, payload["batch"])
-        writer = Writer(self.project, renumbered)
+        writer = Writer(self.project, change)
         with worker.use_fake() as fake, mock.patch.object(figure_checks, "run_checks", passing_checks):
             fake.script(respond=writer, role="writer")
             for _ in range(figures):
@@ -454,6 +461,42 @@ class ComposeFiguresTest(PlannedFigureCase):
         self.assertIn("Say the spread is narrow.", report, "the figures' points for the text are kept for the writer")
         self.assertEqual([(entry["id"], entry["status"]) for entry in record["figures"]["figures"]], [("F1", "verified"), ("S1", "verified")])
         self.assertEqual(record["tables"], ["T1", "T2"], "the plan's table first, then the writer's after it")
+
+    def test_each_supplementary_table_of_one_result_gets_its_own_number_and_file_pair(self):
+        self.drawn("R1", [(1, "keep"), (2, "keep"), (3, None)], tables=[(1, "keep"), (2, None), (3, None)])
+        record = self.compose_with_figures()
+        self.assertEqual(record["tables"], ["T1", "ST1", "ST2", "T2"], "each table once, the plan's first")
+        folder = self.project / "research" / "paper" / "tables"
+        self.assertEqual(sorted(path.name for path in folder.iterdir() if path.name.startswith("ST")),
+                         ["ST1.csv", "ST1.md", "ST2.csv", "ST2.md"])
+        self.assertIn("**Supplementary Table S1.** the errors 2", self.read("tables/ST1.md"))
+        self.assertIn("**Supplementary Table S2.** the errors 3", self.read("tables/ST2.md"))
+        from wayline import builds
+        self.assertEqual(builds._table_label(paper_figures.build(self.project)), "Supplementary Table S3",
+                         "the inherited results' table comes next, with no number skipped")
+
+    def test_supplementary_items_are_numbered_by_first_citation_in_the_composed_text(self):
+        self.drawn("R1", [(1, "keep"), (2, "keep"), (3, None)], tables=[(1, "keep"), (2, None), (3, None), (4, None)])
+
+        def cites(found, calls):
+            found = renumbered(found, calls)
+            if found.get("results"):
+                found["results"] += ("\n\nThe spread is in Supplementary Table S3 and Fig. S1; the errors by noise are in "
+                                     "Table S2, and again in Supplementary Table S3.")
+            return found
+        record = self.compose_with_figures(change=cites)
+        self.assertEqual([(entry["id"], entry["plot"]) for entry in record["figures"]["tables"] if not entry["main"]],
+                         [("ST1", "R1.T4"), ("ST2", "R1.T3"), ("ST3", "R1.T2")], "cited first, then the uncited in the plan's order")
+        self.assertIn("**Supplementary Table S1.** the errors 4", self.read("tables/ST1.md"))
+        self.assertIn("**Supplementary Table S3.** the errors 2", self.read("tables/ST3.md"))
+        self.assertIn("Supplementary Table S1 and Fig. S1; the errors by noise are in Table S2, and again in "
+                      "Supplementary Table S1.", self.read("results.md"))
+        self.assertEqual([entry["id"] for entry in record["figures"]["figures"]], ["F1", "S1"])
+        assert_no_record_text(self, self.project)
+        # A re-order that keeps the results reads them by this version's numbers, so nothing moves.
+        again = self.compose_with_figures(figures=0, verdicts=[], change=renumbered)
+        self.assertEqual([(entry["id"], entry["plot"]) for entry in again["figures"]["tables"] if not entry["main"]],
+                         [("ST1", "R1.T4"), ("ST2", "R1.T3"), ("ST3", "R1.T2")])
 
     def test_a_chosen_table_is_a_numbered_table_rendered_from_its_csv(self):
         self.compose_with_figures()

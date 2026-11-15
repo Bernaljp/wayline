@@ -673,9 +673,9 @@ def _front_inputs(book):
         record = {}
     try:
         available = methods_inventory.availability(book)
-    except (OSError, ValueError):
-        available = []
-    return record, code_repository.record(book.project), _intake_data(book), available, _manifest_count(book)
+    except (OSError, ValueError) as failure:
+        available = {"failed": _one_line(failure)}  # the check failed, so the statement claims nothing of it
+    return record, code_repository.record(book.project), _data_read(book), available, _manifest_count(book)
 
 
 def part_inputs(project, structure, followed, plan=None):
@@ -704,15 +704,14 @@ def part_inputs(project, structure, followed, plan=None):
 # --- the front matter -----------------------------------------------------------------------------------------------
 
 
-def _intake_data(book):
-    """The Data bullets of `research/INTAKE.md`, as the intake wrote them."""
-    try:
-        text = book.path("INTAKE.md").read_text(encoding="utf-8")
-    except OSError:
-        return []
-    match = re.search(r"^## Data\s*$(.*?)(?=^## |\Z)", text, re.M | re.S)
-    lines = [line.strip()[2:].strip() for line in (match.group(1) if match else "").splitlines() if line.strip().startswith("- ")]
-    return [line for line in lines if line and line.lower() != "not stated."]
+def _data_read(book):
+    """The Data lines of `research/INTAKE.md` that the work read: each naming a file or a directory that a run the
+    current findings cite named on its command line (`reproduce.read_paths`), or a file under it (ticket 139). A line
+    naming no path, or data no cited run read, is not the data the study analysed."""
+    from wayline import intake, reproduce
+    read = reproduce.read_paths(book.project)
+    return [line for line, path in intake.data_lines(book.project)
+            if path is not None and any(item == path or path in item.parents for item in read)]
 
 
 def _manifest_count(book):
@@ -724,7 +723,7 @@ def front_text(project):
     """`front.md`, written by code: the front matter as the owner gave it, a marked placeholder for what is not given yet,
     and the data and code availability statements from the records."""
     book = ledger_for(project)
-    record, repository, data, not_reproduced, manifested = _front_inputs(book)
+    record, repository, data, available, manifested = _front_inputs(book)
     lines = ["# Front matter", ""]
     authors = record.get("authors") or []
     lines += ["## Authors", ""]
@@ -758,10 +757,37 @@ def front_text(project):
             "" if public else ", private until the authors make it public: %s" % PLACEHOLDER % "the public URL"))
     else:
         lines.append(PLACEHOLDER % "the code repository, which setup has not settled")
-    if not_reproduced:
-        lines.append("The code repository does not reproduce: %s." % "; ".join(
-            _one_line(item.get("method") or item.get("name") or item) for item in not_reproduced))
+    said = _reproduced_text(bool(remote.get("repository")), available)
+    if said:
+        lines += ["", said]
     return "\n".join(lines) + "\n"
+
+
+def _reproduced_text(settled, available):
+    """The code availability statement's sentence on the rule from Methods to code: what the code repository reproduces,
+    and each Methods method it does not, where the Methods names it and why; never the record's entries as they are kept.
+
+    Nothing is claimed without a code repository setup settled, or with no method in the Methods; a check that could not
+    run leaves a marked placeholder, never the claim (decision 17: the statement may not claim the repository reproduces
+    a method with no code behind it)."""
+    from wayline import methods
+    if not settled:
+        return None
+    if "failed" in available:
+        return PLACEHOLDER % ("what the code repository reproduces: code could not read the Methods against the code (%s)"
+                              % available["failed"])
+    if not available["methods"]:
+        return None
+    if not available["not_reproduced"]:
+        return "The code repository reproduces every method the Methods names."
+    said = []
+    for entry in available["not_reproduced"]:
+        named = _one_line(entry.get("named"))
+        for path, locator in methods.code_tags([named]):
+            named = "the code at `%s` (`%s`)" % (path, locator)
+        said.append('%s, named in "%s" (%s), since %s' % (named, _one_line(entry.get("heading")), entry.get("passage"),
+                                                         _one_line(entry.get("why"))))
+    return "The code repository reproduces every method the Methods names except %s." % "; ".join(said)
 
 
 def set_front(project, values):
@@ -1121,6 +1147,15 @@ def compose(project, payload, *, harness_root=HARNESS_ROOT, policy=None, say=Non
                                            harness_root, policy, plan, code, build=build, rebuild=rebuild if rebuilding else None)
         answer = envelope.structured_output
     made = paper_figures.make_figures(project, plan, previous, harness_root=harness_root, policy=policy, say=say)
+    # The supplementary items are numbered by their first citation in the parts as composed (ticket 139).
+    # A part kept from the last version cites by that version's numbers, which are read back to the plan's first.
+    back = paper_figures.plan_ids((previous or {}).get("figures"), plan)
+    reading = [answer.get(part) if part in written else paper_figures.relabel(_file_text(book, part), back)
+               for part in WRITTEN if part != "title"]
+    inherited = builds.inherited_id(plan) if "supplement" in recompose and builds.inherited_table(project, plan) else None
+    plan, made, renamed = paper_figures.by_first_citation(plan, made, reading, inherited)
+    if renamed:
+        answer = dict(answer, **{part: paper_figures.relabel(answer.get(part), renamed) for part in written if part != "title"})
     passages = {item.get("id"): item for item in sections.read_passages(book)}
     texts = {}
     with book.lock():
