@@ -12,8 +12,9 @@ reached its target. A project that records no objective at all has nothing for t
 
 **The budgets** are `harness.json.budgets`: `wallclock_hours`, counted from the end of setup (the first `phase` into
 the execution phase, P5, that the confirmed plan journals, else the first `run_started`), and `gpu_hours`, each
-job's hours times the GPUs it held, a job still running counted to now. Spending either ends the run
-`budget_spent`; the decider never extends one; only the owner raises one, with `wayline switch --budget`.
+job's hours times the GPUs it held, a job still running counted to now, and a job that shares a card counting its
+share of it (ticket 140). Spending either ends the run `budget_spent`; the decider never extends one; only the owner
+raises one, with `wayline switch --budget`.
 
 **The switches.** `wayline switch --stop-when <rule>` and `wayline switch --budget <name>=<value>` write `harness.json`
 and then journal `control` (`stop_when`, `budget`), so a crash between the two leaves a run that starts from the new
@@ -40,7 +41,7 @@ from wayline.project import HARNESS_JSON, ProjectError, control, find_project, r
 __all__ = [
     "OBJECTIVES", "FRONTIER", "RULES", "BUDGETS", "OBJECTIVES_CLOSED", "GOAL_REACHED", "BUDGET_SPENT", "FRONTIER_EMPTY",
     "EXECUTE_PHASE", "rule_of", "describe_rule", "waited", "covered", "rule_end", "reached_goals", "setup_ended_at", "after_setup",
-    "wallclock_hours", "gpu_hours", "spent", "stated", "describe_spent", "parse_rule", "set_stop_when", "set_budget", "switch_command", "REPLAN", "ANSWER", "PARK", "DROP", "FRONTIER_OPTIONS",
+    "wallclock_hours", "gpu_hours", "job_records", "spent", "stated", "describe_spent", "parse_rule", "set_stop_when", "set_budget", "switch_command", "REPLAN", "ANSWER", "PARK", "DROP", "FRONTIER_OPTIONS",
     "DECIDER_CHOICES", "FRONTIER_ORIGIN", "frontier_origin", "frontier_objective", "frontier_choice", "progressed_since", "last_replan",
     "empty_frontier_asks",
 ]
@@ -145,9 +146,25 @@ def wallclock_hours(events, now):
     return 0.0 if started is None else max(0.0, (now - started) / 3600.0)
 
 
-def gpu_hours(events, now):
-    """Each job's hours times the GPUs it held: from its `job_launched` to its end, or to `now` while it runs."""
-    total, live = 0.0, {}
+def gpu_hours(events, now, jobs=None):
+    """Each job's hours times the GPUs it held, from its `job_launched` to its process's end, or to `now` while it runs.
+
+    The one reading of the GPU budget (`status`, the account, the run's end), and it never goes down (ticket 140).
+    `jobs` are the job files by id (`job_records`). An attempt ends where its job file's `ended_at` says, which the
+    poll that saw the process gone wrote at that moment, so no reading before it counted past it; else at the journal's
+    end of it (its end event, or the job's next launch); else at `now`. A `job_finished`'s `seconds` is never read: it
+    took back hours already counted. A job that declared `gpu_mem_gb` counts its share of each card it held, the
+    declared memory over the card's `gpu_total_gb`, at most 1; any other job counts each GPU it held whole.
+    """
+    jobs = jobs or {}
+    total, live, launches = 0.0, {}, {}
+
+    def close(job, end):
+        started, count, attempt = live.pop(job)
+        ended = _process_end(jobs.get(job), attempt)
+        ends = [value for value in (ended, end) if value is not None]
+        return _held(started, min(ends + [now])) * count * _share(jobs.get(job))
+
     for event in events:
         name, payload = event.get("event"), event.get("payload") or {}
         job = payload.get("job") or event.get("job")
@@ -155,36 +172,65 @@ def gpu_hours(events, now):
             continue
         if name == JOB_LAUNCHED:
             if job in live:
-                total += _held(live.pop(job), epoch(event.get("ts")))
+                total += close(job, epoch(event.get("ts")))
+            launches[job] = launches.get(job, 0) + 1
+            attempt = payload.get("attempt") if isinstance(payload.get("attempt"), int) else launches[job]
             gpus = payload.get("gpu_uuids") or []
-            live[job] = (epoch(event.get("ts")), len(gpus) if isinstance(gpus, list) else 0)
+            live[job] = (epoch(event.get("ts")), len(gpus) if isinstance(gpus, list) else 0, attempt)
         elif name in _JOB_ENDS and job in live:
-            started, count = live.pop(job)
-            seconds = payload.get("seconds") if name == JOB_FINISHED else None
-            if _number(seconds):
-                total += max(0.0, seconds) / 3600.0 * count
-            else:
-                total += _held((started, count), epoch(event.get("ts")))
-    for started, count in live.values():
-        total += _held((started, count), now)
+            total += close(job, epoch(event.get("ts")))
+    for job in list(live):
+        total += close(job, None)
     return total
 
 
-def _held(launch, end):
-    started, count = launch
+def job_records(project):
+    """`{job id: job file}` of `research/jobs/`, what `gpu_hours` reads each attempt's end and share from; an unreadable
+    file is left out, and its job counts by the journal alone."""
+    found = {}
+    for path in sorted((Path(project) / "research" / "jobs").glob("*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(record, dict) and record.get("id"):
+            found[str(record["id"])] = record
+    return found
+
+
+def _process_end(record, attempt):
+    """When the attempt's process ended, as its job file's `ended_at` holds it, or None."""
+    attempts = (record or {}).get("attempts") or []
+    if not isinstance(attempts, list) or not 1 <= attempt <= len(attempts) or not isinstance(attempts[attempt - 1], dict):
+        return None
+    return epoch(attempts[attempt - 1].get("ended_at"))
+
+
+def _share(record):
+    """The share of each GPU a job counts: its declared GPU memory over the card's total, at most 1; 1 when it declared none."""
+    devices = (record or {}).get("devices") or {}
+    declared, card = devices.get("gpu_mem_gb"), devices.get("gpu_total_gb")
+    if not (_number(declared) and _number(card) and declared > 0 and card > 0):
+        return 1.0
+    return min(1.0, float(declared) / float(card))
+
+
+def _held(started, end):
     if started is None or end is None:
         return 0.0
-    return max(0.0, end - started) / 3600.0 * count
+    return max(0.0, end - started) / 3600.0
 
 
 def _number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def spent(harness, events, now):
-    """The budgets spent at `now`, as `(name, limit, used)`: a stated limit the hours have reached; none stated is no limit."""
+def spent(harness, events, now, jobs=None):
+    """The budgets spent at `now`, as `(name, limit, used)`: a stated limit the hours have reached; none stated is no limit.
+
+    `jobs` are the job files by id (`job_records`), which the GPU hours read each attempt's end and share from."""
     budgets = (harness or {}).get("budgets") or {}
-    used = {"wallclock_hours": lambda: wallclock_hours(events, now), "gpu_hours": lambda: gpu_hours(events, now)}
+    used = {"wallclock_hours": lambda: wallclock_hours(events, now), "gpu_hours": lambda: gpu_hours(events, now, jobs)}
     found = []
     for name in BUDGETS:
         limit = budgets.get(name)

@@ -23,19 +23,25 @@ kept there along with what it is given.
 """
 
 import argparse
+import gzip
 import hashlib
+import io
 import json
 import math
 import os
 import re
 import subprocess
 import sys
+import tarfile
+import zlib
+from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from wayline import code_repository
 from wayline.cli import parse_args
+from wayline.dossier import EPRINT_HEAD, PDF_HEAD
 from wayline.jsonschema import ValidationError, check, load_schema
 from wayline.ledger import Ledger, atomic_write
 from wayline.pacing import ASK, CONSENTS
@@ -49,6 +55,7 @@ from wayline.tools import run_tool
 
 __all__ = [
     "SECTIONS", "DEFAULT_HUMAN_ONLY", "IntakeError", "take_intake", "intake_command", "DROP_DIR", "DROP_MAX_BYTES", "dropped_materials", "check_drop", "plain_name", "drop_material",
+    "Eprint", "eprint_source", "data_lines",
 ]
 
 INTAKE_MD = "INTAKE.md"
@@ -110,6 +117,12 @@ _SLUG = re.compile(r"^[a-z][a-z0-9_-]*\Z")
 _URI = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
 _PDF_DOI = re.compile(r"(?:prism:doi>|dc:identifier>\s*(?:doi:)?|/DOI\s*\()\s*(10\.\d{4,9}/[^\s<>()]+)", re.IGNORECASE)
 _PDF_ARXIV = re.compile(r"arXiv:\s?(\d{4}\.\d{4,5}(?:v\d+)?)")
+# An e-print (ticket 139): a paper's LaTeX source as arXiv serves it, a tarball or one gzipped `.tex`, looked into no
+# further than its first EPRINT_MAX_BYTES; arXiv's own name for one carries the identifier (`arXiv-1706.03762v7.tar.gz`).
+EPRINT_MAX_BYTES = 64 * 1024 * 1024
+EPRINT_TEX_BYTES = 1_000_000
+_EPRINT_NAME = re.compile(r"(?:^|[^\d.])(\d{4}\.\d{4,5}(?:v\d+)?)(?:\.tar(?:\.[a-z0-9]+)?|\.tgz|\.gz)?$", re.IGNORECASE)
+_TEX_TITLE = re.compile(r"\\title\s*(?:\[[^\]]*\])?\s*\{((?:[^{}]|\{[^{}]*\})*)\}", re.S)
 
 
 class IntakeError(ValueError):
@@ -147,6 +160,8 @@ def gather(spec, project, base):
         path = _as_path(identifier, base)
         if path is not None and path.is_file() and path.suffix.lower() == ".pdf":
             _take_pdf(gathered, path, project, note=note)
+        elif path is not None and (eprint := eprint_source(path)) is not None:
+            _take_eprint(gathered, path, project, eprint, note=note)
         elif path is not None and path.exists():
             raise IntakeError("%s is a file, not a reference: give it as a material, or give the reference's DOI or title" % identifier)
         elif identifier.lower().endswith(".pdf") and _looks_like_path(identifier):
@@ -154,6 +169,10 @@ def gather(spec, project, base):
         elif identifier:
             gathered.references.append(_item(identifier, note))
     for pointer in spec.get("data", []):
+        path = _as_path(pointer, base)
+        if path is not None and (eprint := eprint_source(path)) is not None:
+            _take_eprint(gathered, path, project, eprint)  # another work's source, never data the study reads
+            continue
         gathered.data.append(_data_line(pointer, project, base))
     for repository in spec.get("code", []):
         gathered.code.append(_code_line(_existing(repository, base, "repository"), project))
@@ -197,6 +216,10 @@ def _take_material(gathered, material, project, base):
         else:
             _take_plan(gathered, path, project)
         return
+    eprint = eprint_source(path)
+    if eprint is not None:
+        _take_eprint(gathered, path, project, eprint)
+        return
     gathered.data.append(_data_line(str(path), project, base))
 
 
@@ -226,9 +249,10 @@ def _take_plan(gathered, path, project):
     gathered.plans.append((_shown(path, project), text))
 
 
-def _item(identifier, note=None, pdf=None):
-    """One reference as intake records it (decision 17): what names it, the owner's note, and the PDF that is its source."""
-    return {"identifier": identifier, "note": note, "pdf": pdf}
+def _item(identifier, note=None, pdf=None, eprint=None):
+    """One reference as intake records it (decision 17): what names it, the owner's note, the PDF that is its source, and
+    the e-print that stands for it when nothing names it (ticket 139)."""
+    return {"identifier": identifier, "note": note, "pdf": pdf, "eprint": eprint}
 
 
 def _take_pdf(gathered, path, project, note=None):
@@ -266,6 +290,84 @@ def _take_pdf(gathered, path, project, note=None):
         gathered.references.append(_item("arXiv:%s" % found.group(1), note, shown))
         return
     gathered.references.append(_item(None, _joined(notes + ["No DOI or arXiv id could be read from it; hand over its DOI or its title."]), shown))
+
+
+Eprint = namedtuple("Eprint", "title")
+"""An e-print as intake reads one: the LaTeX title of its document, or None when it states none."""
+
+
+class _Bounded(io.RawIOBase):
+    """A file read no further than `limit` bytes: past them it ends, so a large tarball is looked into, never read whole."""
+
+    def __init__(self, handle, limit):
+        self.handle, self.left = handle, limit
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        data = self.handle.read(min(len(buffer), max(self.left, 0)))
+        self.left -= len(data)
+        buffer[:len(data)] = data
+        return len(data)
+
+
+def eprint_source(path):
+    """`Eprint(title)` when the file at `path` is an e-print, the LaTeX source of a paper as arXiv serves it, else None.
+
+    arXiv serves a tarball, gzipped or not, or for a single-file submission one gzipped `.tex`; either is an e-print when
+    a `.tex` in it declares a `\\documentclass`. Only the first `EPRINT_MAX_BYTES` of the file are read, as a stream: an
+    e-print whose document lies past them, or a tarball of data that large, is not taken for one.
+    """
+    try:
+        with open(path, "rb") as handle:
+            try:
+                with tarfile.open(fileobj=io.BufferedReader(_Bounded(handle, EPRINT_MAX_BYTES)), mode="r|*") as archive:
+                    for member in archive:
+                        if member.isfile() and member.name.lower().endswith(".tex") and member.size <= EPRINT_TEX_BYTES:
+                            found = _document(archive.extractfile(member).read())
+                            if found is not None:
+                                return found
+                return None
+            except (tarfile.TarError, EOFError, zlib.error):
+                pass  # no tarball, or one cut off at the bound: a gzipped `.tex` is read next
+            handle.seek(0)
+            if handle.read(2) != b"\x1f\x8b":
+                return None
+            handle.seek(0)
+            with gzip.GzipFile(fileobj=io.BufferedReader(_Bounded(handle, EPRINT_MAX_BYTES))) as unzipped:
+                return _document(unzipped.read(EPRINT_TEX_BYTES))
+    except (OSError, EOFError, zlib.error):
+        return None
+
+
+def _document(data):
+    """`Eprint(title)` for the bytes of a `.tex` declaring a `\\documentclass`, else None."""
+    text = data.decode("utf-8", errors="replace")
+    if "\\documentclass" not in text:
+        return None
+    found = _TEX_TITLE.search(text)
+    return Eprint(_plain_tex(found.group(1)) if found else None)
+
+
+def _plain_tex(text):
+    """A LaTeX title as words: line breaks, commands, and braces taken out."""
+    text = re.sub(r"\\\\(?:\[[^\]]*\])?|\\(?:thanks|footnote)\s*\{[^{}]*\}", " ", text)
+    text = re.sub(r"\\[A-Za-z]+\*?\s*", "", text).replace("{", "").replace("}", "").replace("~", " ")
+    return " ".join(text.split()) or None
+
+
+def _take_eprint(gathered, path, project, eprint, note=None):
+    """An e-print: another work's LaTeX source, so a reference, never a Data line (ticket 139).
+
+    It is named by the arXiv id in its file name when arXiv's name for it carries one, else by its LaTeX title, which
+    absorb looks up as a title; with neither it is listed as `E-print: <path>`, a file nothing is ever asked about.
+    """
+    shown = _shown(path, project)
+    said = _joined([note, "The e-print `%s`, another work's LaTeX source: a reference, never data the study reads." % shown])
+    found = _EPRINT_NAME.search(path.name)
+    identifier = "arXiv:%s" % found.group(1) if found else eprint.title
+    gathered.references.append(_item(identifier, said, eprint=None if identifier else shown))
 
 
 def _joined(notes):
@@ -621,9 +723,11 @@ def _reference_lines(items):
         if item.get("identifier"):
             head = item["identifier"]
             if item.get("pdf"):
-                nested.append("PDF: `%s`" % item["pdf"])
+                nested.append(PDF_HEAD % item["pdf"])
+        elif item.get("pdf"):
+            head = PDF_HEAD % item["pdf"]
         else:
-            head = "PDF: `%s`" % item["pdf"]
+            head = EPRINT_HEAD % item["eprint"]
         if item.get("note"):
             nested.append(item["note"])
         lines.append("\n".join([head] + ["  - " + line for line in nested]))
@@ -665,6 +769,29 @@ def replace_section(text, heading, body):
 
 
 # --- the dashboard's drop ---------------------------------------------------------------------------------
+
+
+def data_lines(project):
+    """`[(line, path)]`: each Data bullet of `research/INTAKE.md` as the intake wrote it, with the file or directory it
+    names (its backquoted path, resolved against the project), or None for a pointer in words. A bullet naming an
+    e-print source is left out: another work's source is a reference, never data (ticket 139)."""
+    project = Path(project)
+    try:
+        text = Ledger(project).path(INTAKE_MD).read_text(encoding="utf-8")
+    except OSError:
+        return []
+    body = section(text, "## Data") or ""
+    found = []
+    for row in body.splitlines():
+        line = row.strip()[2:].strip() if row.startswith("- ") else ""
+        if not line or line.lower() == "not stated.":
+            continue
+        named = re.match(r"^`([^`]+)`", line)
+        path = (project / named.group(1)).resolve() if named else None
+        if path is not None and eprint_source(path) is not None:
+            continue
+        found.append((line, path))
+    return found
 
 
 def dropped_materials(project):
@@ -719,8 +846,8 @@ def drop_material(project, name, data):
     refused, and so is an empty file or one over `DROP_MAX_BYTES`. A name another file already holds
     gets a numbered name beside it; the same bytes dropped twice are kept once.
 
-    When `INTAKE.md` exists the file is added to it as `wayline intake` reads a material: a PDF or a
-    reference list under the references, a plan under the intent, anything else under the data,
+    When `INTAKE.md` exists the file is added to it as `wayline intake` reads a material: a PDF, a
+    reference list, or an e-print source under the references, a plan under the intent, anything else under the data,
     and every other line of the file kept as it was. Without one the file waits, and the next
     `wayline intake` takes it. Returns `{path, size, sha256, already, taken}`: `already` when those
     bytes were kept before, and `taken` the `INTAKE.md` sections the file was added to, which is

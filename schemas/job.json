@@ -22,7 +22,9 @@
         "gpu_uuids": {"type": "array", "items": {"type": "string"}},
         "gpu_indices": {"type": "array", "items": {"type": "integer", "minimum": 0}},
         "cores": {"type": "array", "items": {"type": "integer", "minimum": 0}},
-        "ram_gb": {"type": "number", "minimum": 0}
+        "ram_gb": {"type": "number", "minimum": 0},
+        "gpu_mem_gb": {"type": "number", "minimum": 0, "description": "the GPU memory the job declared, from its ticket's resources: it shares its card with other declaring jobs; absent, it holds its GPUs whole (ticket 140)"},
+        "gpu_total_gb": {"type": "number", "minimum": 0, "description": "with gpu_mem_gb: the total memory of the card it shares, which its GPU hours are a share of (ticket 140)"}
       }
     },
     "log": {"type": "string"},

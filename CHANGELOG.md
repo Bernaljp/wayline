@@ -44,6 +44,28 @@ lists it read-only, marked with its tag.
   Claude Code 2.1.325 and recorded in `docs/verification/m8.md`: a launch through the launcher starts no MCP server
   process, and its `system/init` lists no MCP server and only Claude Code's built-in plugins. The suite runs with an
   empty `CLAUDE_CONFIG_DIR`, so it never reads the owner's settings.
+- The general report counts its claims offline (ticket 140; Implementation Decisions 9 and 17). An offline render, as
+  the conductor and the tick make, counts a sentence of `REPORT.md` the classifier has not read that ends with a tag
+  other than `doc` as a claim, and a tagged one, in its `report_rendered`; the toy's night journaled `claims: 0` for
+  175 tagged findings. The count is an upper bound until the classifier reads those sentences, and one it reads as no
+  claim leaves it. Sections, results, and the paper, linted by passage, count only what the classifier read.
+- GPU hours never go down (ticket 140; Implementation Decisions 6 and 17). `stopping.gpu_hours`, which `status`, the
+  account, and the budget read, reads the job files (`stopping.job_records`) and counts each attempt from its
+  `job_launched` to the `ended_at` the poll that saw its process gone wrote, else the journal's end of it, else now;
+  a `job_finished`'s `seconds` is no longer read. On the toy the reading had gone 1.8, 1.3, 1.45; replayed, it now only
+  grows, to 3.9 hours, and being journaled late no longer counts as holding the GPU.
+- Work that names a goal is no longer refused as "goal" (ticket 140; Implementation Decision 17). The decider's code
+  check took "set the goal run's auroc beside E2's mean", an analysis, for a change of the goal, and turned the toy's
+  parked proposal into a human-only decision ticket. A goal word that names its run, job, result, plot, or file, or a
+  measure or target word in a possessive naming a run, a section, or a plot, is not what the change acts on; the
+  measure's parts after the work they belong to ("the goal run's target"), the eval command with its script, and "the
+  measure file" or "the target result" are still refused.
+- Jobs share a GPU by declared memory (ticket 140; Implementation Decision 6). A ticket's `resources.gpu_mem_gb`
+  declares the GPU memory one job needs. Jobs that declare it share a card while every declared need on it fits the
+  card's total less the reservation's GPU memory and the memory read free covers the jobs placed in the same wave,
+  under the utilization rule and the OOM ladder as they stand; a job that declares none still takes its GPUs whole.
+  The job file records `devices.gpu_mem_gb` and the card's `gpu_total_gb`, and such a job counts that share of the card
+  in its GPU hours. A declaration more than any card can give over the reservation fails the ticket at once.
 - The public showcase (`showcase/`): the dashboard over the M8 toy run as a static site on GitHub Pages, and the
   repository under the MIT license (`LICENSE`), with a `README.md` for a reader new to wayline. `python3 -m
   showcase.build <out>` serves a snapshot of the run (`showcase/toy.tar.xz`: what the views read, the paper, the plots
@@ -53,11 +75,45 @@ lists it read-only, marked with its tag.
   `showcase` workflow builds it on every pull request and opens every view in Chrome, keeping screenshots, and
   publishes it on every push to master, so it shows the interface master has; `tests/test_showcase.py` fails on a
   GET route `COVERAGE` does not account for, and `tests/test_showcase_browser.py` on a request no recording answers.
+- The paper's front matter and supplement as composed (ticket 139; Implementation Decision 17).
+  - Code availability says in a sentence what the code repository reproduces and each Methods method it does not,
+    where the Methods names it and why, where it had printed the code-to-Methods record's entries as Python dict
+    literals. It claims nothing before setup settles a code repository or while the Methods names no method, and a
+    check that could not run leaves a marked placeholder instead of the claim.
+  - Supplementary figures and tables are numbered once each, in order of first citation through the parts as
+    composed (an item no part cites after the cited ones, in the plan's order), each with its own `.md` and `.csv`;
+    the writer's citations are renumbered with them, and a part kept from the last version is read by that version's
+    numbers. Two tables of one result had shared one number (both `ST3` in the M8 toy's paper, one file pair written
+    and the inherited results' table numbered past a gap).
+  - Intake files an e-print (a paper's LaTeX source as arXiv serves it: a tarball, or a single gzipped `.tex`) under
+    the references, never the data: by the arXiv id in arXiv's name for it, else by its LaTeX title, else as
+    `E-print: <path>`, a file absorb never asks a service about; given as a material, a `--data` pointer, a
+    `--reference`, or a dashboard drop alike. Only a file's first 64 MiB are looked into, so a tarball whose LaTeX
+    document lies past them is data.
+  - Data availability is written only from what the work read: an `INTAKE.md` Data line is named when a run the
+    current findings cite named its file (or a file under its directory) on its command line
+    (`reproduce.read_paths`); a pointer in words, data no cited run read, and an e-print never are.
+- The plotter writes the harness's tag form (ticket 135; Implementation Decisions 9 and 17). The plotter's prompt
+  states it, `{res:<run-id>/<artifact>#<locator>}` with an example at a drawing's `numbers.json`; on the M8 toy run
+  drawings R4 and R5 wrote `[res:...]`, which the linter does not read, and failed as untagged claims twice. The
+  linter's `untagged_claim` now names the three forms that support a claim, and for a sentence ending in a tag in
+  square brackets (`[res:...]`, `[code:...]`, any kind) says "tags are written `{res:...}`, in braces", which the
+  conductor's lint check hands the resume. `tests/test_prompt.py` checks that every role prompt asking for tagged
+  sentences states the form.
 - The ticket graph draws a ticket blocked by two tickets one of which blocks the other (`dag._layers`). The layering
   pushed every pending parent at once and took a parent still waiting for its sibling's sake for a cycle, so the
   dashboard's graph of the M8 toy run (ticket 96 blocked by 115 and 116, and 116 by 115) answered 500, "the edges form
   a cycle through node 115". It now lays out one parent at a time, so the stack is the path and only a real cycle
   raises.
+- An answered decision ticket is done in the views at once (ticket 131; Implementation Decisions 2 and 8). Every view
+  reads the graph through `tickets.answered_graph`, `refresh_graph` with replay's answers applied, so a decision ticket
+  the journal answered is `done` there, as the conductor's next wave writes it in the file: `wayline status`, the
+  dashboard's overview, graph, board, and decisions view (the ticket leaves the open ones for the log, and the open
+  entries lose `answered`), and the account's waiting-on-you lines. The chat renders `research/ACCOUNT.md` before each
+  session, so the digest it reads first says the same. On the toy's live setup (ticket 122) the decider confirmed the
+  spec and `status` still listed the ticket in the frontier and among the open decision tickets, blocking all, for more
+  than half an hour, until the first wave. An answer written in the file and not yet journaled still shows open, and a
+  rerun opens it again. The dashboard's graph draws from the ticket files alone when the journal cannot be read.
 - The harness's user guide (ticket 124), in place of the documentation site the M8 tickets named: Markdown under
   `docs/guide/`, readable on GitHub, its index linked from `README.md`, one page per topic (getting started, talking
   with a project, objectives and goals, starting midway, the research, the paper, the run, software and environments,

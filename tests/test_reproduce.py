@@ -6,6 +6,7 @@ A temporary project, written through the ledger seam: job records under `researc
 """
 
 import json
+import re
 import subprocess
 
 from tests.projects import ProjectTestCase
@@ -224,3 +225,38 @@ class OnlyAfterAChangeTest(ReproduceCase):
         init_project(other)
         self.assertEqual(reproduce.render_if_changed(other), [])
         self.assertFalse((other / "code").exists())
+
+
+class WhatTheWorkReadTest(ReproduceCase):
+    """What the work read (ticket 139): the files the cited runs named, which Data availability is written from."""
+
+    def setUp(self):
+        super().setUp()
+        data = self.project / "data"
+        data.mkdir()
+        for name in ("colonies.csv", "unused.csv"):
+            (data / name).write_text("colony,r\nA,0.9\n")
+        record = self.ledger.read_json("jobs/t3-1.json")
+        record["command"] = list(record["command"]) + ["--input=data/colonies.csv"]
+        self.ledger.write_json("jobs/t3-1.json", record, schema="job")
+        intake_md = self.project / "research" / "INTAKE.md"
+        text = intake_md.read_text(encoding="utf-8") if intake_md.is_file() else "# Intake\n\n## Data\n\nNot stated.\n"
+        listed = ("- `data/colonies.csv` (a file, 16 bytes)\n- `data/unused.csv` (a file, 16 bytes)\n"
+                  "- `data` (a directory, 2 files)\n- The colony recordings on Zenodo\n")
+        text = re.sub(r"(?ms)^## Data\s*$.*?(?=^## |\Z)", lambda match: "## Data\n\n%s\n" % listed, text)
+        self.ledger.write_markdown("INTAKE.md", text)
+
+    def test_the_files_the_cited_runs_named_are_what_the_work_read_never_what_they_wrote(self):
+        read = reproduce.read_paths(self.project)
+        root = self.project.resolve()
+        self.assertIn(root / "data" / "colonies.csv", read)
+        self.assertIn(root / "code" / "train.py", read, "the job read its script too")
+        self.assertNotIn(root / "data" / "unused.csv", read)
+        self.assertNotIn(root / "results" / "t3-a1" / "metrics.json", read, "what a run wrote is not a read")
+
+    def test_data_availability_names_only_the_data_lines_the_work_read(self):
+        from wayline import paper
+        said = paper.front_text(self.project).split("## Data availability\n\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("The data this study analysed: `data/colonies.csv` (a file, 16 bytes); `data` (a directory, 2 files).", said)
+        self.assertNotIn("unused.csv", said)
+        self.assertNotIn("Zenodo", said, "a pointer in words names nothing a run read")

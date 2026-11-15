@@ -17,6 +17,7 @@ cannot read them back after the session that launched it is gone.
 import argparse
 import csv
 import json
+import math
 import os
 import shlex
 import signal
@@ -419,9 +420,9 @@ def snapshot(harness, jobs, gpu_util_free_below=DEFAULT_GPU_UTIL_FREE_BELOW, gpu
              sample_interval_s=DEFAULT_GPU_SAMPLE_INTERVAL_S, disk_path=DISK_PATH):
     """Everything `wayline status` needs: live readings, the reservation, and every slot's state.
 
-    `jobs` are the running job records (schema `job`, `project.LIVE_JOB_STATUSES`); a job holds a
-    GPU whole through its `devices.gpu_indices` and commits cores and RAM through the rest of
-    `devices`. Raises `ResourceError` (or an `OSError` from a `/proc` read) only for a reading the
+    `jobs` are the running job records (schema `job`, `project.LIVE_JOB_STATUSES`); a job holds a GPU through its
+    `devices.gpu_indices`, whole, or shared when it declared `gpu_mem_gb` (ticket 140), and commits cores and RAM
+    through the rest of `devices`. Raises `ResourceError` (or an `OSError` from a `/proc` read) only for a reading the
     box genuinely cannot produce; a missing GPU is a normal CPU-only degrade, not an error.
     """
     gpu_processes = read_gpu_processes()
@@ -599,6 +600,8 @@ class JobSpec:
     wallclock_minutes: int = DEFAULT_WALLCLOCK_MINUTES
     tools: tuple = ()  # `{name, version, lock}` of every tool the job calls (decision 17; ticket 82)
     environment: str = None  # the project's environment the job was resolved in when it was added (decision 17; ticket 83)
+    gpu_mem_gb: float = None  # the GPU memory it declared, so it shares its card (ticket 140); None holds its GPUs whole
+    gpu_total_gb: float = None  # the total memory of the card it shares, which its GPU hours are a share of (ticket 140)
 
     def check(self):
         """Refuse a spec no backend could honor, before anything is launched or written."""
@@ -1196,12 +1199,7 @@ def job_record(spec, backend=None, unit=None, gpu_indices=(), status="pending", 
         "command": [str(part) for part in spec.command],
         "cwd": spec.cwd,
         "env": {str(key): str(value) for key, value in spec.env.items()},
-        "devices": {
-            "gpu_uuids": list(spec.gpu_uuids),
-            "gpu_indices": [int(index) for index in gpu_indices],
-            "cores": [int(core) for core in spec.cores],
-            "ram_gb": spec.ram_gb,
-        },
+        "devices": job_devices(spec.gpu_uuids, gpu_indices, spec.cores, spec.ram_gb, spec.gpu_mem_gb, spec.gpu_total_gb),
         "log": spec.log,
         "expected_outputs": list(spec.expected_outputs),
         "retry": {
@@ -1226,7 +1224,32 @@ def spec_from_record(record):
         ram_gb=devices.get("ram_gb", 0.0), expected_outputs=tuple(record.get("expected_outputs", [])),
         retry=dict(record.get("retry", {})), wallclock_minutes=record.get("wallclock_minutes", DEFAULT_WALLCLOCK_MINUTES),
         tools=tuple(dict(tool) for tool in record.get("tools") or ()), environment=record.get("environment"),
+        gpu_mem_gb=declared_gpu_mem_gb(devices.get("gpu_mem_gb")), gpu_total_gb=devices.get("gpu_total_gb"),
     )
+
+
+def job_devices(gpu_uuids, gpu_indices, cores, ram_gb, gpu_mem_gb=None, gpu_total_gb=None):
+    """A job file's `devices`, the one place it is built: the GPUs, the cores, `MemoryMax`, and for a job that declared
+    the GPU memory it needs, that and the total of the card it shares (ticket 140)."""
+    devices = {"gpu_uuids": list(gpu_uuids), "gpu_indices": [int(index) for index in gpu_indices],
+               "cores": [int(core) for core in cores], "ram_gb": ram_gb}
+    if declared_gpu_mem_gb(gpu_mem_gb) is not None:
+        devices["gpu_mem_gb"] = declared_gpu_mem_gb(gpu_mem_gb)
+        if gpu_total_gb is not None:
+            devices["gpu_total_gb"] = gpu_total_gb
+    return devices
+
+
+def declared_gpu_mem_gb(value):
+    """The GPU memory a job declared, in GB, or None: a positive number declares it; 0, nothing, or anything else does not."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not value > 0:
+        return None
+    return value
+
+
+def _gpu_mib(gb):
+    """GB as MiB, the unit `nvidia-smi` reads memory in."""
+    return int(math.ceil(float(gb) * 1024))
 
 
 def handle_for(record):
@@ -1376,10 +1399,7 @@ class JobRunner:
         record = self.read(spec.id) or job_record(spec, gpu_indices=indices)
         record.update(backend=handle.backend, unit=handle.unit, status="running")
         # The devices the job was launched on, which a placement chose: the next placement reads them as held.
-        record["devices"] = {
-            "gpu_uuids": list(spec.gpu_uuids), "gpu_indices": [int(index) for index in indices],
-            "cores": [int(core) for core in spec.cores], "ram_gb": spec.ram_gb,
-        }
+        record["devices"] = job_devices(spec.gpu_uuids, indices, spec.cores, spec.ram_gb, spec.gpu_mem_gb, spec.gpu_total_gb)
         record["attempts"] = list(record.get("attempts") or []) + [{
             "n": len(record.get("attempts") or []) + 1,
             "started_at": handle.started_at or now_ts(),
@@ -1853,67 +1873,114 @@ def read_readings(harness, gpu_util_samples=DEFAULT_GPU_UTIL_SAMPLES, sample_int
 
 @dataclass(frozen=True)
 class Placement:
-    """Where one pending job runs: the GPUs it takes whole, its cores, and its `MemoryMax` in GB."""
+    """Where one pending job runs: its GPUs, its cores, its `MemoryMax` in GB, and the GPU memory it declared.
+
+    `gpu_mem_gb` is None for a job that takes its GPUs whole; a job that declared it shares its card, and `gpu_total_gb`
+    is that card's memory, which its GPU hours are a share of (ticket 140).
+    """
 
     job: str
     gpu_uuids: tuple
     gpu_indices: tuple
     cores: tuple
     ram_gb: float
+    gpu_mem_gb: float = None
+    gpu_total_gb: float = None
+
+    def devices(self):
+        """The job file's `devices` for this placement."""
+        return job_devices(self.gpu_uuids, self.gpu_indices, self.cores, self.ram_gb, self.gpu_mem_gb, self.gpu_total_gb)
 
 
 def job_request(record, resources=None):
-    """`{"gpu", "cpu", "ram_gb"}` a pending job asks for: its own devices where it names them, else its ticket's `resources`.
+    """`{"gpu", "cpu", "ram_gb", "gpu_mem_gb"}` a pending job asks for: its own devices where it names them, else its
+    ticket's `resources`.
 
-    A job file written by `wayline job add` usually leaves the GPUs and cores to the conductor, and the
-    ticket's `resources` (`gpu`, `cpu`, `ram_gb`) say how many. A job with neither asks for one core.
+    A job file written by `wayline job add` usually leaves the GPUs and cores to the conductor, and the ticket's
+    `resources` (`gpu`, `cpu`, `ram_gb`, `gpu_mem_gb`) say how many. A job with neither asks for one core. `gpu_mem_gb`
+    is None unless the job declared the GPU memory it needs, which lets it share a card (ticket 140).
     """
     devices, resources = record.get("devices") or {}, resources or {}
+    declared = declared_gpu_mem_gb(devices.get("gpu_mem_gb"))
+    declared = declared if declared is not None else declared_gpu_mem_gb(resources.get("gpu_mem_gb"))
     return {
         "gpu": len(devices.get("gpu_uuids") or []) or int(resources.get("gpu") or 0),
         "cpu": len(devices.get("cores") or []) or int(resources.get("cpu") or 1),
         "ram_gb": float(devices.get("ram_gb") or resources.get("ram_gb") or 0),
+        "gpu_mem_gb": None if declared is None else float(declared),
     }
 
 
 def place_jobs(pending, running, readings, requests, util_threshold=DEFAULT_GPU_UTIL_FREE_BELOW):
     """The free-slot rule of decision 6 over the pending jobs, in order: `(placements, waiting)`.
 
-    `pending` and `running` are job records, `readings` is `read_readings`'s shape, and `requests`
-    maps a job id to its `job_request`. A GPU is free when `gpu_free` says so and neither a running
-    job, a job placed earlier in this call, nor the reservation holds it, so one GPU job runs at a
-    time on a one-GPU box and every job takes its GPUs whole. Cores come from a `CoreAllocator` over
-    the unreserved cores no running job holds, so `CPUAffinity` never names a reserved core; a job
-    that names its own cores gets them only when every one is in that pool. The load and the RAM
-    committed grow with each placement, since a job placed a moment ago is not in any reading yet.
-    `waiting` maps each job left pending to the reason, and a job that waits does not stop the ones
-    after it: CPU jobs fill the remaining cores while a GPU job waits for its card.
+    `pending` and `running` are job records, `readings` is `read_readings`'s shape, and `requests` maps a job id to its
+    `job_request`. A GPU is free when `gpu_free` says so and neither a running job, a job placed earlier in this call,
+    nor the reservation holds it, so a job that declares no GPU memory takes its GPUs whole and runs alone on them.
+
+    A job that declares it (`gpu_mem_gb`, ticket 140) shares a card with other declaring jobs while their needs fit.
+    The declared memory of every job on the card, its own included, stays within the card's total less the
+    reservation's GPU memory. The free memory read covers its need and that of the jobs placed on the card in this
+    call, which no reading shows yet. The card's utilization is read as for any GPU, and a reserved card is never shared.
+
+    Cores come from a `CoreAllocator` over the unreserved cores no running job holds, so `CPUAffinity` never names a
+    reserved core; a job that names its own cores gets them only when every one is in that pool. The load and the RAM
+    committed grow with each placement, since a job placed a moment ago is not in any reading yet. `waiting` maps each
+    job left pending to the reason, and a job that waits does not stop the ones after it: CPU jobs fill the remaining
+    cores while a GPU job waits for its card.
     """
     reservation = readings["reservation"]
     nproc = int(readings["nproc"])
     samples = readings.get("gpus") or []
     gpus = samples[-1] if samples else []
-    held = set(reservation.gpu_indices)
+    whole = set(reservation.gpu_indices)  # the cards no other job may join
+    # A shared card's index -> the MiB declared on it by every job there, and by the jobs placed in this call alone,
+    # which no reading shows yet.
+    tally = {}
+
+    def share(index, mib, placed):
+        card = tally.setdefault(index, {"declared": 0, "placed": 0})
+        card["declared"] += mib
+        if placed:
+            card["placed"] += mib
+
     running_cores = set()
     committed = 0
     for record in running:
         devices = record.get("devices") or {}
-        held.update(devices.get("gpu_indices") or [])
+        declared = declared_gpu_mem_gb(devices.get("gpu_mem_gb"))
+        for index in devices.get("gpu_indices") or []:
+            if declared is None:
+                whole.add(index)
+            else:
+                share(index, _gpu_mib(declared), placed=False)
         running_cores.update(devices.get("cores") or [])
         committed += int(float(devices.get("ram_gb") or 0) * GIB)
     allocator = CoreAllocator(core_pool(nproc, reservation.cores, running_cores))
     load = float(readings["loadavg1"])
     available = int(readings["mem_available_bytes"])
     placements, waiting = [], {}
+
+    def takes(gpu, need):
+        """Whether a job declaring `need` MiB (None: the card whole) may be placed on `gpu` now."""
+        index = gpu["index"]
+        card = tally.get(index) or {"declared": 0, "placed": 0}
+        if index in whole or (need is None and index in tally):
+            return False
+        if need is not None and card["declared"] + need + reservation.extra_gpu_mib > gpu["memory_total_mib"]:
+            return False
+        return gpu_free(gpu, _utilization(samples, gpu["uuid"]), False, need_mib=0 if need is None else need + card["placed"],
+                        reserve_mib=reservation.extra_gpu_mib, util_threshold=util_threshold)
+
     for record in pending:
         job_id, request = record["id"], requests[record["id"]]
         devices = record.get("devices") or {}
         named_gpus = list(devices.get("gpu_uuids") or [])
+        declared = request.get("gpu_mem_gb")  # `job_request`'s: a number, or None for the card whole
+        gpu_need = None if declared is None else _gpu_mib(declared)
         chosen = []
         if request["gpu"]:
-            free = [gpu for gpu in gpus if gpu["index"] not in held and gpu_free(
-                gpu, _utilization(samples, gpu["uuid"]), False, reserve_mib=reservation.extra_gpu_mib,
-                util_threshold=util_threshold)]
+            free = [gpu for gpu in gpus if takes(gpu, gpu_need)]
             if named_gpus:
                 chosen = [gpu for gpu in free if gpu["uuid"] in named_gpus]
                 if len(chosen) < len(named_gpus):
@@ -1921,8 +1988,9 @@ def place_jobs(pending, running, readings, requests, util_threshold=DEFAULT_GPU_
                     waiting[job_id] = "GPU %s is not free" % ", ".join(missing)
                     continue
             elif len(free) < request["gpu"]:
-                waiting[job_id] = ("needs %d GPU(s) and %d of %d is free" % (request["gpu"], len(free), len(gpus)) if gpus
-                                   else "needs %d GPU(s) and this machine reports none" % request["gpu"])
+                asked = "needs %d GPU(s)" % request["gpu"] + ("" if declared is None else " with %s GB of GPU memory" % _number(declared))
+                waiting[job_id] = ("%s and %d of %d %s free" % (asked, len(free), len(gpus), "is" if declared is None else "has it")
+                                   if gpus else "%s and this machine reports none" % asked)
                 continue
             else:
                 chosen = free[:request["gpu"]]
@@ -1949,19 +2017,26 @@ def place_jobs(pending, running, readings, requests, util_threshold=DEFAULT_GPU_
             waiting[job_id] = "needs %s of RAM and %s is free over the reservation and the running jobs" % (
                 _gib(need), _gib(available - reservation.ram_bytes - committed))
             continue
-        held.update(gpu["index"] for gpu in chosen)
+        for gpu in chosen:
+            if gpu_need is None:
+                whole.add(gpu["index"])
+            else:
+                share(gpu["index"], gpu_need, placed=True)
         load += cores_needed
         committed += need
+        sharing = bool(chosen) and declared is not None
         placements.append(Placement(job_id, tuple(gpu["uuid"] for gpu in chosen), tuple(gpu["index"] for gpu in chosen),
-                                    tuple(cores), request["ram_gb"]))
+                                    tuple(cores), request["ram_gb"], declared if sharing else None,
+                                    min(gpu["memory_total_mib"] for gpu in chosen) / 1024.0 if sharing else None))
     return placements, waiting
 
 
 def never_fits(request, readings):
     """Why a request can never be placed on this machine, whatever frees up; None when it could be.
 
-    More GPUs than the machine reports (when it reports any), or more cores than lie outside the
-    reservation. RAM is not judged here: `MemAvailable` moves with everything else on the box.
+    More GPUs than the machine reports (when it reports any), more GPU memory declared than its largest card holds over
+    the reservation's GPU memory, which is the most a declaring job can ever get (ticket 140), or more cores than lie
+    outside the reservation. RAM is not judged here: `MemAvailable` moves with everything else on the box.
     """
     reservation = readings["reservation"]
     samples = readings.get("gpus") or []
@@ -1969,6 +2044,12 @@ def never_fits(request, readings):
     usable = [gpu for gpu in gpus if gpu["index"] not in reservation.gpu_indices]
     if gpus and request["gpu"] > len(usable):
         return "it asks for %d GPU(s) and this machine has %d outside the reservation" % (request["gpu"], len(usable))
+    declared = request.get("gpu_mem_gb")
+    if request["gpu"] and usable and declared is not None:
+        largest = max(gpu["memory_total_mib"] for gpu in usable) - reservation.extra_gpu_mib
+        if _gpu_mib(declared) > largest:
+            return "it asks for %s GB of GPU memory and the largest GPU here has %s GB outside the reservation" % (
+                _number(declared), _number(round(max(largest, 0) / 1024.0, 1)))
     outside = int(readings["nproc"]) - len(reservation.cores)
     if request["cpu"] > outside:
         return "it asks for %d core(s) and this machine has %d outside the reservation" % (request["cpu"], outside)

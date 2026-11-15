@@ -9,14 +9,14 @@
 
 **Blocked by:** None - can start immediately. The four parts touch different modules (`provenance`/`report`, `stopping`, the decider's refusal rules, `resources`) and may be split.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#347](https://github.com/Bernaljp/wayline/issues/347) (mirror; the local file is the source)
 
 **Milestone:** after M8 (v1.1.x). **Spec:** Implementation Decisions 6 (jobs and resources), 9 (the provenance linter), 17 (budgets; the decider's limits; the account); ticket 122's live record.
 
-- [ ] The general report's `report_rendered` counts its claim sentences and tags; a test over a fixture ledger.
-- [ ] The GPU-hours reading is one function, monotone over a replayed journal.
-- [ ] A proposal that changes no measure or data is not refused as "goal"; covered by the decider's refusal tests.
-- [ ] Two jobs whose declared GPU memory fits launch on one card; covered with the fake job runner.
-- [ ] `python -m unittest` passes.
+- [x] The general report's `report_rendered` counts its claim sentences and tags; a test over a fixture ledger.
+- [x] The GPU-hours reading is one function, monotone over a replayed journal.
+- [x] A proposal that changes no measure or data is not refused as "goal"; covered by the decider's refusal tests.
+- [x] Two jobs whose declared GPU memory fits launch on one card; covered with the fake job runner.
+- [x] `python -m unittest` passes.

@@ -37,7 +37,7 @@ from wayline.resources import (
 from wayline.schedule import awaits_owner, steps_down
 from wayline.tickets import DECISION as DECISION_KIND
 from wayline.tickets import (
-    GRAPH, SATISFIED, answer_section, by_status, empty_graph, filename, frontier, open_decisions, read_graph,
+    GRAPH, SATISFIED, answer_section, answered_graph, answers_applied, by_status, empty_graph, filename, frontier, open_decisions, read_graph,
     read_ticket, read_tickets, refresh_graph, tickets_dir, with_answer, write_ticket, relative_path,
 )
 
@@ -845,14 +845,14 @@ def status_view(project, refresh=True):
         tickets = {fields["id"]: fields for fields in read_tickets(project)}
     except (ValueError, OSError) as failure:
         problems.append("tickets: %s" % failure)
+    view = replay.replay(events)
     try:
-        graph, regenerated = refresh_graph(project, ledger=ledger, events=events, write=refresh)
+        # A decision ticket the journal answered is done in every line below, not only from the conductor's next wave (ticket 131).
+        graph, regenerated = answered_graph(project, events, ledger=ledger, write=refresh)
     except (ValueError, OSError) as failure:
         # A ticket file a human broke must not blank the view: the last good graph still prints.
         problems.append("graph.json: %s" % failure)
-        graph = read_graph(project)
-    if graph is None:
-        graph = empty_graph()
+        graph = answers_applied(read_graph(project) or empty_graph(), view.answers)
 
     jobs, job_problems = read_jobs(project)
     problems.extend(job_problems)
@@ -861,7 +861,6 @@ def status_view(project, refresh=True):
     if resource_problem:
         problems.append(resource_problem)
     active = read_active()
-    view = replay.replay(events)
     from wayline.decisions import decider_ready, project_log  # the decisions module imports this one
     answering, decider = answering_autonomy(project, harness, view), decider_ready(project=project)
     decided, log_problems = project_log(project, events)
@@ -914,7 +913,7 @@ def status_view(project, refresh=True):
         "hold": hold_status(project, events, harness, graph, tickets, view),
         # The objectives and their goals' best kept values, and the stopping rule and budgets (decision 17; ticket 87).
         "objectives": objectives_view(project, problems, events),
-        "stopping": stopping_view(harness, events),
+        "stopping": stopping_view(harness, events, jobs=_job_records(project)),
         "resources": resources,
         "events": events[-10:],
         "offset": offset,
@@ -1172,15 +1171,22 @@ def _waiting_on_fable(project, events, view, graph, fields, falls_back):
     return waiting
 
 
-def stopping_view(harness, events, now=None):
-    """The stopping rule and each budget, with what was used of it: what `status` shows in place of GOAL.json's stop (ticket 87)."""
+def stopping_view(harness, events, now=None, jobs=None):
+    """The stopping rule and each budget, with what was used of it: what `status` shows in place of GOAL.json's stop (ticket 87).
+
+    `jobs` are the job files by id (`stopping.job_records`), which the GPU hours read each attempt's end and share from."""
     from wayline import stopping  # the stopping module imports this one
     now = time.time() if now is None else now
     budgets = harness.get("budgets") or {}
-    used = {"wallclock_hours": stopping.wallclock_hours(events, now), "gpu_hours": stopping.gpu_hours(events, now)}
+    used = {"wallclock_hours": stopping.wallclock_hours(events, now), "gpu_hours": stopping.gpu_hours(events, now, jobs)}
     return {"rule": stopping.rule_of(harness), "line": stopping.describe_rule(stopping.rule_of(harness)),
             "budgets": {name: {"limit": budgets.get(name), "used": round(used[name], 2)} for name in stopping.BUDGETS},
-            "spent": [name for name, _, _ in stopping.spent(harness, events, now)]}
+            "spent": [name for name, _, _ in stopping.spent(harness, events, now, jobs)]}
+
+
+def _job_records(project):
+    from wayline import stopping  # the stopping module imports this one
+    return stopping.job_records(project)
 
 
 def objectives_view(project, problems=None, events=()):

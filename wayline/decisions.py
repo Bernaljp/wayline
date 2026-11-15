@@ -57,9 +57,9 @@ from wayline.project import (
 )
 from wayline.schedule import awaits_owner
 from wayline.tickets import (
-    DECISION as DECISION_KIND, SATISFIED, TicketError, answer_section, build_graph, empty_graph, filename, next_id,
-    open_decisions, paused_by, read_graph, read_ticket, read_tickets, refresh_graph, relative_path, section,
-    tickets_dir, with_answer, write_ticket,
+    DECISION as DECISION_KIND, SATISFIED, TicketError, answer_section, answered_graph, answers_applied, build_graph, empty_graph,
+    filename, next_id, open_decisions, paused_by, read_graph, read_ticket, read_tickets, relative_path, section, tickets_dir,
+    with_answer, write_ticket,
 )
 
 __all__ = [
@@ -620,10 +620,11 @@ def decisions_view(project):
     except (ValueError, OSError) as failure:
         problems.append("tickets: %s" % failure)
     try:
-        graph, _ = refresh_graph(project, ledger=ledger, events=events, write=False)
+        # A decision ticket the journal answered is done, and so not open here (ticket 131): it moves to the log.
+        graph, _ = answered_graph(project, events, ledger=ledger, write=False)
     except (ValueError, OSError) as failure:
         problems.append("graph.json: %s" % failure)
-        graph = read_graph(project) or empty_graph()
+        graph = answers_applied(read_graph(project) or empty_graph(), view.answers)
     try:
         records = grill.read_records(project)
     except (ProjectError, OSError) as failure:
@@ -677,7 +678,6 @@ def _open_entry(entry, ticket, body, graph, view, autonomy, decider, problems, h
     else:
         pauses = sorted(item["id"] for item in graph["tickets"]
                         if item["id"] in paused_by(graph, [identifier]) and item["status"] not in SATISFIED + ("parked",))
-    answered = view.answers.get(identifier)
     return {
         "id": identifier,
         "title": ticket.get("title"),
@@ -693,8 +693,8 @@ def _open_entry(entry, ticket, body, graph, view, autonomy, decider, problems, h
         "reversible": record.get("reversible", True),
         "pauses": pauses,
         "awaits": "owner" if awaits_owner(entry, autonomy, decider) else "decider",
-        # Journaled and not yet closed by a conductor, or written into the file and not yet journaled.
-        "answered": {"answer": answered.get("answer"), "decided_by": answered.get("decided_by")} if answered else None,
+        # Written into the file and not yet journaled: the conductor journals it at its next wave. One journaled is done
+        # and not listed here (ticket 131).
         "written": answer_section(body),
         # The ask of decision 15 falls back unanswered at this time, where its timeout applies (ticket 57).
         "falls_back_at": ask_falls_back_at(harness or {}, view, identifier, autonomy, policy),
