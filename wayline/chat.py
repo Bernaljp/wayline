@@ -10,9 +10,11 @@ the message, unseen in the conversation), the reply, and the card it carried. Th
 and `worker.resume`) on the chat's rung, `opus high` unless `harness.json`'s `chat` names another. The session of the
 last message is resumed while that message was answered under an hour ago (`RESUME_S`, the prompt cache's life);
 otherwise a fresh one starts from the digest: the `wayline` skill, `research/ACCOUNT.md` first, and the last few
-exchanges. A project answers one message at a time and queues the rest in order; the dashboard answers the queue on a
-thread that ends when the queue is empty, so no process stays running between messages (`start`). The reply streams
-to the panel by polling: while a session runs, `thread_view` reads what its stream has said so far.
+exchanges. Before each session the account is rendered from the journal (`_render_digest`), so an answer journaled
+with no conductor running is in it (ticket 131). A project answers one message at a time and queues the rest in order;
+the dashboard answers the queue on a thread that ends when the queue is empty, so no process stays running between
+messages (`start`). The reply streams to the panel by polling: while a session runs, `thread_view` reads what its
+stream has said so far.
 
 **What a session may do.** Read tools on the project and only the verbs the skill's routing table names
 (`conversation.routing_table`), under `dontAsk`: no edits, no shell beyond those verbs, no web, no MCP. A verb the
@@ -361,6 +363,7 @@ def _answer(project, record, now, harness_root):
         record["errors"] = ["the usage windows could not be read: %s" % failure]
     if hit is not None:
         return _end(project, record, REFUSED, now, reply=hit)
+    _render_digest(project)
     previous = _previous(project, record)
     resume = previous is not None and _now(now) - float(previous.get("ended_at") or 0) < RESUME_S
     envelope, failure = None, None
@@ -376,6 +379,21 @@ def _answer(project, record, now, harness_root):
         return _end(project, read_message(project, record["id"]) or record, FAILED, now,
                     errors=["the chat's session could not be launched: %s" % failure])
     return _finish(project, read_message(project, record["id"]) or record, envelope, model, near, now)
+
+
+def _render_digest(project):
+    """Render `research/ACCOUNT.md` from the journal before a session reads it (ticket 131).
+
+    The conductor renders it at the end of every wave; with none running, an answer journaled since (setup's
+    confirmations, the owner's answer while the run is stopped) would leave the session telling the owner that a done
+    decision ticket waits on them. A render that changes nothing writes nothing. One that fails leaves the account as
+    it stands, which the session still reads: the account is a view of the journal, and the reply does not wait on it.
+    """
+    from wayline import account  # the account reads every part of the ledger
+    try:
+        account.render_account(project)
+    except (ValueError, OSError):
+        pass
 
 
 def _launch(project, record, harness_root, previous):

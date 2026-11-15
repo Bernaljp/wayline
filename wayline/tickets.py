@@ -27,8 +27,8 @@ __all__ = [
     "TicketError", "RESEARCH", "TICKETS", "GRAPH", "SCHEDULING_FIELDS", "STATUSES", "SATISFIED",
     "DECISION", "DOSSIER", "HARNESS", "HARDEST", "RESULT_HEADING", "works_in_the_harness", "DOCS", "DOCS_BUILD", "machine_acceptance",
     "slug", "filename", "relative_path", "next_id", "parse_ticket", "read_ticket", "read_tickets", "write_ticket",
-    "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph",
-    "frontier", "open_decisions", "is_open_decision", "paused_by", "by_status", "empty_graph", "tickets_dir",
+    "snapshot", "attempts_from_events", "build_graph", "read_graph", "refresh_graph", "answered_graph", "answers_applied",
+    "answered_entry", "frontier", "open_decisions", "is_open_decision", "paused_by", "by_status", "empty_graph", "tickets_dir",
     "with_result", "with_result_note", "result_notes", "ANSWER_HEADING", "SUPERSEDED_ANSWER_HEADING", "section", "answer_section", "with_answer", "retire_answer",
     "touch_problem", "touches_problems", "keeps_code", "CODE_KIND", "CODE_DIR",
 ]
@@ -517,6 +517,20 @@ def refresh_graph(project, ledger=None, events=None, force=False, write=True):
     return graph, True
 
 
+def answered_graph(project, events, ledger=None, write=False):
+    """`refresh_graph` with the journal's answers applied (`answers_applied`): the graph every view reads (ticket 131).
+
+    `status` and the dashboard show the frontier and the open decision tickets from this (and `ACCOUNT.md` reads ticket
+    files through `answered_entry`, the same rule), so a `decision` journaled with no conductor running makes its ticket
+    done in each of them at once. What is written, with `write`, is the graph of the ticket files alone, as before:
+    their statuses are the conductor's to change.
+    """
+    from wayline import replay  # replay reads pacing, which reads the schedule, which reads this module
+
+    graph, regenerated = refresh_graph(project, ledger=ledger, events=events, write=write)
+    return answers_applied(graph, replay.replay(events).answers), regenerated
+
+
 def _without_zeros(attempts):
     """`attempts_from_events` omits a ticket never launched; a stored graph writes it as 0."""
     return {key: value for key, value in attempts.items() if value}
@@ -588,25 +602,21 @@ def is_open_decision(entry):
     return entry["kind"] == DECISION and entry["status"] not in SATISFIED + ("parked",)
 
 
-def closes_answered(entry, answers):
-    """Whether this ticket is a decision ticket the journal answered and its file still holds open (ticket 131).
+def answered_entry(entry, answers):
+    """This ticket as the journal has it: `done` when it is an open decision ticket the journal answered (ticket 131).
 
-    `answers` is replay's `answers`, by ticket id. The conductor marks such a ticket `done` in its file at its next
-    wave (ticket 35), and the `decision` is the record of its closing, so a view reads it closed from the journal's
-    answer rather than waiting for that wave: an answer given before a run or while it is stopped leaves no gap.
+    `entry` is a graph entry or a ticket's frontmatter, and `answers` replay's `answers`, by ticket id. The `decision`
+    is the record that a decision ticket is done; the conductor marks it `done` in its file at its next wave (ticket 35). A view reads it done from the answer rather than waiting for that wave, so an answer given before a run
+    or while it is stopped leaves no gap. The entry is not changed; a copy is returned when its status is.
     """
-    return entry["kind"] == DECISION and entry["id"] in answers and entry["status"] not in SATISFIED + ("parked",)
+    if is_open_decision(entry) and entry["id"] in answers:
+        return dict(entry, status="done")
+    return entry
 
 
-def with_answers(graph, answers):
-    """The graph with every decision ticket the journal answered held `done`, as the conductor's next wave writes it.
-
-    The frontier, the open decision tickets, and the counts that `status`, the dashboard, and `ACCOUNT.md` show are
-    read from this, so a `decision` journaled with no conductor running closes its ticket in each of them at once.
-    The graph is not changed; a copy is returned.
-    """
-    return dict(graph, tickets=[dict(entry, status="done") if closes_answered(entry, answers) else entry
-                                for entry in graph["tickets"]])
+def answers_applied(graph, answers):
+    """The graph with `answered_entry` applied to every ticket: what the conductor's next wave will write."""
+    return dict(graph, tickets=[answered_entry(entry, answers) for entry in graph["tickets"]])
 
 
 def paused_by(graph, identifiers):
