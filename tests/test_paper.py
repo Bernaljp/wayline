@@ -356,6 +356,39 @@ class FrontMatterTest(PaperCase):
         self.assertNotIn("the authors and their affiliations]", front)
         self.assertIn("[TO BE GIVEN: acknowledgments]", front)
 
+    def availability(self, heading):
+        front = self.read("front.md")
+        return front.split("## %s\n\n" % heading, 1)[1].split("\n## ", 1)[0]
+
+    def test_code_availability_says_in_prose_what_the_repository_does_not_reproduce_and_why(self):
+        filtered = self.passage("methods", "Filtering", "Each trace was band-passed with a Butterworth filter.")["id"]
+        drift = self.passage("methods", "Drift", "The drift is fitted by least squares {code:code/drift.py#fit_drift}.")["id"]
+        self.compose()
+        said = self.availability("Code availability")
+        self.assertNotRegex(said, r"[{}]|'\w+':", "the code-to-Methods record never reaches the paper as it is kept")
+        self.assertIn("The code repository reproduces every method the Methods names except ", said)
+        self.assertIn('Butterworth, named in "Filtering" (%s), since no code under `code/` calls Butterworth filter (butter)'
+                      % filtered, said)
+        self.assertIn('the code at `code/drift.py` (`fit_drift`), named in "Drift" (%s), since `main` holds no such code' % drift, said)
+        self.assertIn('least squares, named in "Fitting" (%s)' % self.owners, said)
+
+    def test_data_availability_names_only_the_data_never_a_references_e_print_source(self):
+        from tests.test_intake import TOY_SOURCE
+        kept = self.project / "research" / "intake"
+        kept.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(TOY_SOURCE, kept / TOY_SOURCE.name)
+        (kept / "counts.csv").write_text("gene,n\nA,1\n", encoding="utf-8")
+        intake_md = self.project / "research" / "INTAKE.md"
+        text = intake_md.read_text(encoding="utf-8") if intake_md.is_file() else "# Intake\n\n## Data\n\nNot stated.\n"
+        listed = ("- `research/intake/paper-c-source.tar.gz` (a file, 1.1 KB)\n"
+                  "- `research/intake/counts.csv` (a file, 12 bytes)\n")
+        text = re.sub(r"(?ms)^## Data\s*$.*?(?=^## |\Z)", lambda match: "## Data\n\n%s\n" % listed, text)
+        self.ledger.write_markdown("INTAKE.md", text)
+        self.compose()
+        said = self.availability("Data availability")
+        self.assertIn("The data this study analysed: `research/intake/counts.csv` (a file, 12 bytes).", said)
+        self.assertNotIn("paper-c-source", said, "an e-print source is a reference's, never the data the study read")
+
     def test_front_matter_outside_its_schema_is_refused(self):
         code, _, err = self.verb("front", "-", stdin=json.dumps({"authors": [{"name": ""}]}))
         self.assertEqual(code, 2)

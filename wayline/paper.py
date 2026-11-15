@@ -705,14 +705,20 @@ def part_inputs(project, structure, followed, plan=None):
 
 
 def _intake_data(book):
-    """The Data bullets of `research/INTAKE.md`, as the intake wrote them."""
+    """The Data bullets of `research/INTAKE.md`, as the intake wrote them, but a file that is a reference's e-print source:
+    another work's source is no data the study read (ticket 139)."""
+    from wayline import intake
     try:
         text = book.path("INTAKE.md").read_text(encoding="utf-8")
     except OSError:
         return []
     match = re.search(r"^## Data\s*$(.*?)(?=^## |\Z)", text, re.M | re.S)
     lines = [line.strip()[2:].strip() for line in (match.group(1) if match else "").splitlines() if line.strip().startswith("- ")]
-    return [line for line in lines if line and line.lower() != "not stated."]
+
+    def a_source(line):
+        named = re.match(r"^`([^`]+)`", line)
+        return named is not None and intake.eprint_title(Path(book.project) / named.group(1)) is not None
+    return [line for line in lines if line and line.lower() != "not stated." and not a_source(line)]
 
 
 def _manifest_count(book):
@@ -758,10 +764,27 @@ def front_text(project):
             "" if public else ", private until the authors make it public: %s" % PLACEHOLDER % "the public URL"))
     else:
         lines.append(PLACEHOLDER % "the code repository, which setup has not settled")
-    if not_reproduced:
-        lines.append("The code repository does not reproduce: %s." % "; ".join(
-            _one_line(item.get("method") or item.get("name") or item) for item in not_reproduced))
+    lines += ["", _reproduced_text(not_reproduced)]
     return "\n".join(lines) + "\n"
+
+
+_CODE_TAG = re.compile(r"^\{code:([^#}]+)(?:#([^}]*))?\}$")
+
+
+def _reproduced_text(not_reproduced):
+    """The code availability statement's sentence on the code-to-Methods record: what the code repository reproduces, and
+    each Methods method it does not, where the Methods names it and why; never the record's entries as they are kept."""
+    if not not_reproduced:
+        return "The code repository reproduces every method the Methods names."
+    said = []
+    for entry in not_reproduced:
+        named = _one_line(entry.get("named"))
+        tag = _CODE_TAG.match(named)
+        if tag is not None:
+            named = "the code at `%s`%s" % (tag.group(1), " (`%s`)" % tag.group(2) if tag.group(2) else "")
+        said.append('%s, named in "%s" (%s), since %s' % (named, _one_line(entry.get("heading")), entry.get("passage"),
+                                                         _one_line(entry.get("why"))))
+    return "The code repository reproduces every method the Methods names except %s." % "; ".join(said)
 
 
 def set_front(project, values):

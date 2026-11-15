@@ -113,6 +113,7 @@ _REFERENCES_HEADING = re.compile(r"^references?\b", re.IGNORECASE)
 _LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
 _TOP_ITEM = re.compile(r"^ ?(?:[-*+]|\d+[.)])\s+\S")  # a list item at the margin; anything indented further is nested
 _PDF_ITEM = re.compile(r"^PDF:\s*`([^`]+)`\s*$")
+_SOURCE_ITEM = re.compile(r"^Source:\s*`([^`]+)`\s*$")  # an e-print source with no title or identifier (ticket 139)
 _LIST_MARKER = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 _EMPTY_ANSWER = frozenset(["none", "n/a", "na", "nothing", "tbd", "todo", "-", "none."])
 _ALNUM = re.compile(r"[a-z0-9]", re.IGNORECASE)
@@ -426,6 +427,9 @@ def _intake_reference(line, nested):
             notes.append(text)
     alone = _PDF_ITEM.match(_LIST_MARKER.sub("", line).strip())
     bare = _LIST_MARKER.sub("", line).strip().strip("`").strip()
+    source = _SOURCE_ITEM.match(_LIST_MARKER.sub("", line).strip())
+    if source is not None:
+        return Reference("file", source.group(1), line, note=" ".join(notes) or None, pdf=pdf)  # never a title query
     if alone is not None or (bare.lower().endswith(".pdf") and " " not in bare and "://" not in bare):
         path = alone.group(1) if alone is not None else bare
         return Reference("file", path, line, note=" ".join(notes) or None, pdf=path)  # a path is never a title query

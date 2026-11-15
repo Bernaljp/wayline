@@ -242,16 +242,17 @@ def build(project, answers=(), *, autonomous=False, venue=None, limit=None, pane
             figures.append({"id": "F%d" % (len(figures) + 1), "result": row["result"], "heading": row["heading"], "main": True,
                             "panels": list(panels), "how": "a figure from nothing, on request" if row["from_nothing"] else row["how"],
                             "part": part, "parts": len(row["figures"]), "from_nothing": row["from_nothing"]})
-        tables += [{"id": "T%d" % (len([t for t in tables if t["main"]]) + 1), "result": row["result"], "plot": plot, "main": True}
-                   for plot in row["tables"]]
+        for plot in row["tables"]:  # one at a time: each table its own number, two of one result too
+            tables.append({"id": "T%d" % (len([t for t in tables if t["main"]]) + 1), "result": row["result"], "plot": plot, "main": True})
     for row in rows:
         pages = _split(row["rest"], panels_per_page) if row["rest"] else []
         for part, panels in enumerate(pages, start=1):  # a supplementary figure too keeps to a page
             supplementary.append({"id": "S%d" % (len(supplementary) + 1), "result": row["result"], "heading": row["heading"],
                                   "main": False, "panels": list(panels), "how": "its other plots", "part": part,
                                   "parts": len(pages), "from_nothing": False})
-        tables += [{"id": "ST%d" % (len([t for t in tables if not t["main"]]) + 1), "result": row["result"], "plot": plot, "main": False}
-                   for plot in row["rest_tables"]]
+        for plot in row["rest_tables"]:
+            tables.append({"id": "ST%d" % (len([t for t in tables if not t["main"]]) + 1), "result": row["result"], "plot": plot,
+                           "main": False})
     marks = {}
     for row in rows:
         marks.update(row["marks"])

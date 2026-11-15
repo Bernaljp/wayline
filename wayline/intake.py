@@ -110,6 +110,12 @@ _SLUG = re.compile(r"^[a-z][a-z0-9_-]*\Z")
 _URI = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
 _PDF_DOI = re.compile(r"(?:prism:doi>|dc:identifier>\s*(?:doi:)?|/DOI\s*\()\s*(10\.\d{4,9}/[^\s<>()]+)", re.IGNORECASE)
 _PDF_ARXIV = re.compile(r"arXiv:\s?(\d{4}\.\d{4,5}(?:v\d+)?)")
+# An e-print source (ticket 139): a tarball holding a LaTeX document, read only when it is no larger than an arXiv
+# source can be; arXiv's own name for one carries the identifier (`arXiv-1706.03762v7.tar.gz`).
+EPRINT_MAX_BYTES = 64 * 1024 * 1024
+EPRINT_TEX_BYTES = 1_000_000
+_EPRINT_NAME = re.compile(r"(?:^|[^\d.])(\d{4}\.\d{4,5}(?:v\d+)?)(?:\.tar(?:\.[a-z0-9]+)?|\.tgz)?$", re.IGNORECASE)
+_TEX_TITLE = re.compile(r"\\title\s*(?:\[[^\]]*\])?\s*\{((?:[^{}]|\{[^{}]*\})*)\}", re.S)
 
 
 class IntakeError(ValueError):
@@ -147,6 +153,8 @@ def gather(spec, project, base):
         path = _as_path(identifier, base)
         if path is not None and path.is_file() and path.suffix.lower() == ".pdf":
             _take_pdf(gathered, path, project, note=note)
+        elif path is not None and path.is_file() and eprint_title(path) is not None:
+            _take_source(gathered, path, project, note=note)
         elif path is not None and path.exists():
             raise IntakeError("%s is a file, not a reference: give it as a material, or give the reference's DOI or title" % identifier)
         elif identifier.lower().endswith(".pdf") and _looks_like_path(identifier):
@@ -154,6 +162,10 @@ def gather(spec, project, base):
         elif identifier:
             gathered.references.append(_item(identifier, note))
     for pointer in spec.get("data", []):
+        path = _as_path(pointer, base)
+        if path is not None and path.is_file() and eprint_title(path) is not None:
+            _take_source(gathered, path, project)  # another work's source, never data the study reads
+            continue
         gathered.data.append(_data_line(pointer, project, base))
     for repository in spec.get("code", []):
         gathered.code.append(_code_line(_existing(repository, base, "repository"), project))
@@ -196,6 +208,9 @@ def _take_material(gathered, material, project, base):
             gathered.reference_notes.append("Read from `%s` as a reference list." % _shown(path, project))
         else:
             _take_plan(gathered, path, project)
+        return
+    if eprint_title(path) is not None:
+        _take_source(gathered, path, project)
         return
     gathered.data.append(_data_line(str(path), project, base))
 
@@ -266,6 +281,50 @@ def _take_pdf(gathered, path, project, note=None):
         gathered.references.append(_item("arXiv:%s" % found.group(1), note, shown))
         return
     gathered.references.append(_item(None, _joined(notes + ["No DOI or arXiv id could be read from it; hand over its DOI or its title."]), shown))
+
+
+def eprint_title(path):
+    """The title of the e-print source `path` is, `""` for one whose title cannot be read, or None when it is no e-print
+    source: a tarball holding a `.tex` file with a `\\documentclass`, as arXiv's source of a paper is."""
+    import tarfile
+
+    path = Path(path)
+    try:
+        if not path.is_file() or path.stat().st_size > EPRINT_MAX_BYTES or not tarfile.is_tarfile(path):
+            return None
+        with tarfile.open(path, "r:*") as archive:
+            for member in archive:
+                if not member.isfile() or not member.name.lower().endswith(".tex") or member.size > EPRINT_TEX_BYTES:
+                    continue
+                handle = archive.extractfile(member)
+                text = handle.read().decode("utf-8", errors="replace") if handle is not None else ""
+                if "\\documentclass" not in text:
+                    continue
+                found = _TEX_TITLE.search(text)
+                return _plain_tex(found.group(1)) if found else ""
+    except (OSError, tarfile.TarError, EOFError):
+        return None
+    return None
+
+
+def _plain_tex(text):
+    """A LaTeX title as words: line breaks, commands, and braces taken out."""
+    text = re.sub(r"\\\\(?:\[[^\]]*\])?|\\(?:thanks|footnote)\s*\{[^{}]*\}", " ", text)
+    text = re.sub(r"\\[A-Za-z]+\*?\s*", "", text).replace("{", "").replace("}", "").replace("~", " ")
+    return " ".join(text.split())
+
+
+def _take_source(gathered, path, project, note=None):
+    """An e-print source tarball: another work's source, so a reference, never a Data line (ticket 139).
+
+    It is named by the arXiv id in its file name when arXiv's name for it carries one, else by its LaTeX title, which
+    absorb looks up as a title; with neither it is listed as `Source: <path>`, a file nothing is ever asked about.
+    """
+    shown = _shown(path, project)
+    said = _joined([note, "The e-print source `%s`: another work's source, so a reference and never data the study reads." % shown])
+    found = _EPRINT_NAME.search(path.name)
+    identifier = "arXiv:%s" % found.group(1) if found else (eprint_title(path) or None)
+    gathered.references.append(dict(_item(identifier, said), source=None if identifier else shown))
 
 
 def _joined(notes):
@@ -622,8 +681,10 @@ def _reference_lines(items):
             head = item["identifier"]
             if item.get("pdf"):
                 nested.append("PDF: `%s`" % item["pdf"])
-        else:
+        elif item.get("pdf"):
             head = "PDF: `%s`" % item["pdf"]
+        else:
+            head = "Source: `%s`" % item["source"]
         if item.get("note"):
             nested.append(item["note"])
         lines.append("\n".join([head] + ["  - " + line for line in nested]))
@@ -719,8 +780,8 @@ def drop_material(project, name, data):
     refused, and so is an empty file or one over `DROP_MAX_BYTES`. A name another file already holds
     gets a numbered name beside it; the same bytes dropped twice are kept once.
 
-    When `INTAKE.md` exists the file is added to it as `wayline intake` reads a material: a PDF or a
-    reference list under the references, a plan under the intent, anything else under the data,
+    When `INTAKE.md` exists the file is added to it as `wayline intake` reads a material: a PDF, a
+    reference list, or an e-print source under the references, a plan under the intent, anything else under the data,
     and every other line of the file kept as it was. Without one the file waits, and the next
     `wayline intake` takes it. Returns `{path, size, sha256, already, taken}`: `already` when those
     bytes were kept before, and `taken` the `INTAKE.md` sections the file was added to, which is
