@@ -17,4 +17,4 @@ On the toy's live run (ticket 122, `docs/verification/m8.md`), every verdict, de
 
 - [x] The launch argv of a ticket, a verdict, the decider, and the chat carry the flag; a test reads each.
 - [x] A live launch on this workstation starts no MCP server process; recorded.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
