@@ -106,6 +106,29 @@ Outside `autonomous` you are notified when an order ends.
 The front matter (authors, affiliations, corresponding author, acknowledgments, funding, competing interests) is
 setup's ninth question and can be given any time; until then it is a marked placeholder.
 
+## Reading the paper
+
+The dashboard reads the paper to you as a paper: **read** beside each part in the Paper view, or beside a compilation,
+opens `#/<project>/paper/read`, the current version's title, abstract, Introduction, Results, Discussion, and Methods
+as prose, with the math typeset and every provenance tag hidden. Each heading carries its objective or result id
+(`O1`, `R2`) as a quiet link. Each claim sentence is tinted, a color and an underline style both, and the legend above
+the text says what each tint means. One switch picks the lens, and your browser remembers it:
+
+- **by source** (the default): your own passage, this project's results (a `res` tag), code, the literature, an
+  inherited document; a claim with no tag, or a reference still to be resolved, is outlined rather than tinted;
+- **by objective**: the objective the sentence's result serves, one color for each, the parked ones grey;
+- **by check**: whether a check judged the sentence and how it stood (a claim verdict or a numbers check that
+  passed, one that failed, or never checked), read from the journal and the paper's builds, never asked of a model.
+
+Click a sentence or a figure for its panel, a bottom sheet on a phone: each tag with the run, the file, and the value
+its locator holds there (`BASE_AUROC = 0.8352720450281426`), with a button that opens the file; the finding or passage
+it was written from, with its ticket and run; its result and objective; every check that judged it, each opening its
+verdict; and the part's alternatives, with choose. A figure's panel shows its caption, the result it draws, its data
+and script, the candidates the figure role ranked, its machine checks, and its honesty verdict. **Comment** and **This
+is wrong** put your note into the chat with the sentence's id (`results.s12`, or `F1` for a figure), so the session
+records it as feedback or a mark; the view itself changes nothing. A link to `#/<project>/results.s12` opens the
+reading view at that sentence; a sentence the current version no longer holds is not found.
+
 ## Verbs the session runs
 
 `wayline passage add --section <s> --heading <h> "<text>"`, `wayline edit <section|outline>`,

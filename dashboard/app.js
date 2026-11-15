@@ -1491,7 +1491,8 @@ async function openViewer(path, options) {
     if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
     const text = await response.text();
     if (read !== viewer.reads) return;
-    replace(shown, [renderMarkdown(withoutFrontmatter(text), path)]);
+    // A file that is not prose (a script, a JSON file a tag names) is shown as it is, not read as Markdown.
+    replace(shown, [opts.code ? el('pre', { class: 'viewer-code', text }) : renderMarkdown(withoutFrontmatter(text), path)]);
     body.scrollTop = 0;
     if (opts.focus) focusHeading(shown, opts.focus);
   } catch (failure) {
@@ -2177,7 +2178,7 @@ const routing = { done: false };
 
 // The views that read only while they are shown, each by its loader: every poll asks, and a hidden view
 // returns at once. Run's panels are read whatever is shown, since its overview feeds the tabs.
-const VIEW_LOADERS = { research: loadResearch, paper: loadPaper, inherited: loadInherited, marks: loadMarks };
+const VIEW_LOADERS = { research: loadResearch, paper: loadPaper, inherited: loadInherited, marks: loadMarks, reading: loadReading };
 
 // Each routed view's panels, with what each says until its project's first answer lands.
 const READING = {
@@ -2190,6 +2191,7 @@ const READING = {
   'paper-references-body': 'reading the references',
   'paper-repository-body': 'reading the code repository',
   'paper-methods-body': 'reading Methods',
+  'reading-body': 'reading the paper',
   'inherited-documents-body': 'reading the documents',
   'inherited-concerns-body': 'reading the concerns',
   'inherited-claims-body': 'reading the inherited claims',
@@ -2222,6 +2224,7 @@ function parseRoute(hash) {
   if (!parts.length) return { page: 'projects' };
   const [project, rest] = parts;
   if (rest === undefined) return { project, view: 'research' };
+  if (rest === 'paper' && parts[2] === 'read') return { project, view: 'reading' }; // the paper's reading view (ticket 141)
   if (VIEW_NAMES.includes(rest)) return { project, view: rest };
   if (BATCH_ID.test(rest)) return { project, view: 'marks', batch: rest }; // a batch opens Marks at it, not the viewer
   return { project, item: rest };
@@ -2283,6 +2286,7 @@ function route(event) {
 
 function showView(name) {
   state.view = name;
+  if (name !== 'reading' && !document.getElementById('reading-panel').hidden) closeReadingPanel();
   for (const view of document.querySelectorAll('main .view')) view.hidden = view.dataset.view !== name;
   document.getElementById('strip').hidden = name === 'projects' || !state.project || readOnlyNow();
   document.body.dataset.view = name;
@@ -2303,7 +2307,8 @@ function markViews() {
       else link.removeAttribute('href');
     }
     if (name === 'inherited') link.hidden = !state.project || !offersInherited(state.project);
-    link.setAttribute('aria-current', String(name === state.view));
+    // The reading view is Paper's own sub-view, so Paper stays the view shown in the bar.
+    link.setAttribute('aria-current', String(name === state.view || (name === 'paper' && state.view === 'reading')));
   }
 }
 
@@ -2341,6 +2346,19 @@ async function openItem(project, id, landed) {
     return;
   }
   if (viewer.item !== opening) return;
+  if (item.kind === 'sentence' || item.kind === 'figure') {
+    // A sentence or a figure of the paper opens the reading view at it, with its panel, rather than the viewer.
+    viewer.item = null;
+    reading.focus = item.id;
+    history.replaceState(null, '', readingRoute(project));
+    if (state.view === 'reading' && reading.project === project && reading.index.has(item.id)) {
+      reading.focus = null;
+      openReadingPanel(project, item.id);
+    } else {
+      showView('reading');
+    }
+    return;
+  }
   showView(item.view);
   // `R4 Does the loss fall?`, but `The account` alone: a word id says nothing its title does not.
   const title = !item.title ? item.id : /^[A-Z0-9]/.test(item.id) ? `${item.id} ${item.title}` : item.title;
@@ -2849,6 +2867,16 @@ function renderOrder(view, project) {
   replace(document.getElementById('paper-order-body'), parts);
 }
 
+// The reading view's link: `part`, when given, is where it opens (ticket 141).
+function readLink(project, part, text) {
+  const link = el('a', { class: 'action', href: readingRoute(project), text: text || 'read', title: 'read the main text with where each claim comes from' });
+  link.addEventListener('click', () => { reading.scrollTo = part || null; });
+  return link;
+}
+
+// The parts the reading view shows: the title, the abstract, and the main text.
+const READ_PARTS = new Set(['title', 'abstract', 'introduction', 'results', 'discussion', 'methods']);
+
 function renderParts(paper, project) {
   const body = document.getElementById('paper-parts-body');
   if (!paper) {
@@ -2859,13 +2887,13 @@ function renderParts(paper, project) {
     id: part.part, label: part.title, link: false, insert: false,
     title: part.exists ? '' : 'not written',
     status: part.edited ? 'changed since composed' : null,
-    acts: part.exists ? [viewButton(part.path, part.title)] : [],
+    acts: part.exists ? [viewButton(part.path, part.title), ...(READ_PARTS.has(part.part) ? [readLink(project, part.part)] : [])] : [],
     more: [more(`version ${part.version}${part.edited ? ': its file changed since code wrote it (an edit or a choice), which the next order keeps unless its inputs change' : ''}`),
       ...(part.alternatives.length ? [el('ul', { class: 'rows nested' }, part.alternatives.map((item) => alternativeRow(project, item)))] : [])],
   }));
   replace(body, [
     el('p', { class: 'note' }, [document.createTextNode(`Version ${paper.version}, composed at order ${paper.order} on ${paper.composed}. `),
-      viewButton(paper.report, 'PAPER.md', 'open PAPER.md')]),
+      viewButton(paper.report, 'PAPER.md', 'open PAPER.md'), document.createTextNode(' '), readLink(project, null, 'read the paper')]),
     el('ul', { class: 'rows' }, rows),
     subhead('earlier versions', (paper.earlier || []).length),
     rowsOrNone(paper.earlier || [], (earlier) => itemRow(project, {
@@ -2903,6 +2931,7 @@ function compilationRow(project, item) {
     id: item.name, label: item.display_name, link: false, insert: false,
     title: `from version ${item.paper_version}, ${item.compiled}`,
     status: item.outcome,
+    acts: [readLink(project, null, item.older ? 'read the current version' : 'read')],
     more: [
       el('p', { class: 'row-more downloads' }, DOWNLOADS.filter(([kind]) => item.downloads[kind]).map(([kind, label]) =>
         el('a', { class: 'action', href: downloadUrl(item.downloads[kind]), text: label, download: '' }))),
@@ -3720,7 +3749,7 @@ function kindFields(decision, project) {
 const THEMES = [['auto', 'auto'], ['light', 'day'], ['dark', 'night']];
 const STORE = {
   theme: 'wayline.theme', folded: 'wayline.folded', view: 'wayline.view', zoom: 'wayline.viewer.zoom', seen: 'wayline.seen',
-  chat: 'wayline.chat', chatOpen: 'wayline.chat.open',
+  chat: 'wayline.chat', chatOpen: 'wayline.chat.open', lens: 'wayline.reading.lens',
 };
 
 function remember(key, value) {
@@ -3873,6 +3902,411 @@ function wireIndex() {
   // the nearest thing where it cannot.
   if (window.ResizeObserver) new ResizeObserver(measureHeader).observe(document.querySelector('header'));
   else window.addEventListener('resize', measureHeader);
+}
+
+// --- reading the paper (ticket 141) -------------------------------------------------------------
+//
+// The paper's main text as prose (`paper/read`, built by code from the parts and the ledger), each sentence a span
+// the active lens tints by where it comes from, the objective it serves, or how its checks left it: a color and an
+// underline style both, so a tint reads in the dark, on a phone, and to a colorblind eye. The lens is the article's
+// one attribute, so switching it redraws nothing; the choice is kept in this browser. A click opens the panel beside
+// the text (a bottom sheet on a phone), which no poll redraws; Comment and This is wrong put the owner's note into the
+// chat with the sentence's item id attached, so the review goes through the conversation and the view writes nothing.
+
+const LENSES = [['source', 'by source'], ['objective', 'by objective'], ['check', 'by check']];
+const SOURCE_LEGEND = [
+  ['owner', 'your own passage'], ['result', "this project's results (res)"], ['code', 'code (code)'],
+  ['literature', 'the literature (ref)'], ['document', 'inherited documents (doc)'],
+  ['unresolved', 'a reference still to be resolved'], ['untagged', 'a claim with no tag'],
+];
+const CHECK_LEGEND = [['passed', 'a check passed it'], ['failed', 'a check failed it'], ['unchecked', 'never checked']];
+const SOURCE_NAMES = Object.fromEntries([...SOURCE_LEGEND, ['prose', 'not a claim']]);
+const OBJECTIVE_HUES = 6; // the objectives' colors, then their underline styles, cycle past six
+const LIVE_OBJECTIVE = new Set(['open', 'answered']);
+
+const reading = {
+  project: null, // the project the article was drawn for
+  view: null, // the last answer of `paper/read`
+  index: new Map(), // item id -> { item, part } of every sentence and figure drawn
+  selected: null, // { project, id } of the sentence or figure whose panel is open
+  attached: null, // { project, id } a Comment or This is wrong attached to the chat's next message
+  focus: null, // an item id to open once the article is drawn (an item link landed on it)
+  scrollTo: null, // a part to scroll to once drawn (the Paper view's read link)
+};
+
+function readingRoute(project) {
+  return `#/${encodeURIComponent(project)}/paper/read`;
+}
+
+function readingLens() {
+  const kept = remembered(STORE.lens);
+  return LENSES.some(([name]) => name === kept) ? kept : 'source';
+}
+
+function setLens(name) {
+  remember(STORE.lens, name);
+  markChoice(document.getElementById('reading-lens'), name);
+  const article = document.getElementById('reading-article');
+  if (article) article.dataset.lens = name;
+  renderLegend();
+}
+
+let inlineMarkdown = null;
+
+// One sentence's Markdown, math and all, as inline HTML through the same sanitizer as every rendered file.
+function renderInline(text, fileAt, tag) {
+  const node = el(tag || 'span', {});
+  try {
+    if (!inlineMarkdown) inlineMarkdown = markdownWithMath();
+    node.innerHTML = DOMPurify.sanitize(inlineMarkdown.parseInline(text || ''), MATH_PURIFY);
+  } catch (failure) {
+    node.textContent = text || '';
+  }
+  return pointIntoProject(keepOnTheWorkstation(node), fileAt || '');
+}
+
+async function loadReading() {
+  const project = state.project;
+  if (!project || state.view !== 'reading') return;
+  document.getElementById('reading-back').setAttribute('href', routeTo(project, 'paper'));
+  if (reading.project !== project) {
+    // Another project's paper: its legend and its panel go with it.
+    if (!document.getElementById('reading-panel').hidden) closeReadingPanel();
+    reading.view = null;
+    reading.index = new Map();
+    reading.project = project;
+    renderLegend();
+  }
+  try {
+    const view = await get(projectPath('/paper/read'), 'paper-read');
+    if (view && project === state.project) renderReading(view, project);
+  } catch (failure) {
+    if (project === state.project) replace(document.getElementById('reading-body'), [errorState(failure)]);
+  }
+}
+
+// The objective lens's color of each objective: the live ones in id order, each its own hue; the rest grey.
+function objectiveShades(view) {
+  const shades = {};
+  let next = 0;
+  for (const objective of view.objectives || []) {
+    shades[objective.id] = LIVE_OBJECTIVE.has(objective.status) ? String((next++ % OBJECTIVE_HUES) + 1) : 'aside';
+  }
+  return shades;
+}
+
+// The objective a sentence is colored by: the first it serves that the project holds (its heading's, then its result's).
+function objectiveOf(item, shades) {
+  return (item.objectives || []).find((id) => shades[id]) || null;
+}
+
+function shadeOf(item, shades) {
+  const first = objectiveOf(item, shades);
+  return first ? shades[first] : 'none';
+}
+
+function markItem(node, item, shades) {
+  node.dataset.item = item.id;
+  node.dataset.source = item.source;
+  node.dataset.objective = shadeOf(item, shades);
+  node.dataset.check = item.check;
+  node.setAttribute('tabindex', '0');
+  node.setAttribute('role', 'button');
+  node.addEventListener('click', (event) => {
+    if (event.target.closest('a')) return; // a link inside a sentence is the link's
+    openReadingPanel(reading.project, item.id);
+  });
+  node.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      openReadingPanel(reading.project, item.id);
+    }
+  });
+  return node;
+}
+
+function quietId(project, id) {
+  return /^[OR][1-9][0-9]*$/.test(id || '') ? el('a', { class: 'quiet-id', href: routeTo(project, id), text: id, title: `open ${id}` }) : null;
+}
+
+function renderReading(view, project) {
+  reading.project = project;
+  reading.view = view;
+  reading.index = new Map();
+  const body = document.getElementById('reading-body');
+  if (!view.blocks || !view.blocks.length) {
+    replace(body, [emptyState(view.line || 'no paper yet'), ...problemsList(view.problems)]);
+    renderLegend();
+    return;
+  }
+  const shades = objectiveShades(view);
+  const article = el('article', { id: 'reading-article', class: 'paper-text', 'data-lens': readingLens() });
+  let part = null;
+  let partPath = '';
+  for (const block of view.blocks) {
+    if (block.type === 'part') {
+      part = block;
+      partPath = block.path;
+      if (block.part === 'title') continue;
+      const head = el('h2', { class: 'part-head', id: `reading-part-${block.part}` }, [document.createTextNode(block.title)]);
+      if (block.edited) head.appendChild(statusChip('changed since composed'));
+      if (block.alternatives.length > 1) head.appendChild(el('span', { class: 'quiet-id', text: `${block.alternatives.length} alternatives` }));
+      article.appendChild(head);
+      if (!block.exists) article.appendChild(emptyState('not written'));
+      continue;
+    }
+    if (block.type === 'heading') {
+      const level = Math.min(6, block.level + 1);
+      const heading = el(`h${level}`, { class: 'paper-heading' }, [renderInline(block.text, partPath)]);
+      const label = quietId(project, block.id);
+      if (label) heading.appendChild(label);
+      article.appendChild(heading);
+    } else if (block.type === 'code') {
+      article.appendChild(el('pre', { class: 'paper-code', text: block.text }));
+    } else if (block.type === 'figure') {
+      reading.index.set(block.id, { item: block, part });
+      const image = block.image ? el('img', { src: downloadUrl(block.image), alt: `Figure ${block.id.slice(1)}: ${block.caption}` })
+        : emptyState(`${block.id} has no image a browser can draw`);
+      article.appendChild(markItem(el('figure', { class: 'paper-figure', 'aria-label': `Figure ${block.id.slice(1)}` }, [
+        image, el('figcaption', {}, [el('strong', { text: `Figure ${block.id.slice(1)}. ` }), renderInline(block.caption, partPath)]),
+      ]), block, shades));
+    } else if (block.type === 'paragraph') {
+      const title = part && part.part === 'title';
+      const paragraph = el(title ? 'h1' : 'p', { class: title ? 'paper-title' : 'paper-paragraph' });
+      block.sentences.forEach((sentence, at) => {
+        reading.index.set(sentence.id, { item: sentence, part });
+        if (at) paragraph.appendChild(document.createTextNode(' '));
+        paragraph.appendChild(markItem(renderInline(sentence.plain, partPath, 'span'), sentence, shades));
+      });
+      for (const node of paragraph.querySelectorAll('[data-item]')) node.classList.add('sentence');
+      article.appendChild(paragraph);
+    }
+  }
+  const scroll = document.scrollingElement ? document.scrollingElement.scrollTop : 0;
+  replace(body, [
+    el('p', { class: 'note' }, [document.createTextNode(`Version ${view.version}, composed at order ${view.order} on ${view.composed}.`)]),
+    article, ...problemsList(view.problems),
+  ]);
+  if (document.scrollingElement) document.scrollingElement.scrollTop = scroll;
+  renderLegend();
+  if (reading.scrollTo) {
+    const target = document.getElementById(`reading-part-${reading.scrollTo}`);
+    reading.scrollTo = null;
+    if (target && target.scrollIntoView) target.scrollIntoView({ block: 'start' });
+  }
+  if (reading.focus) {
+    const id = reading.focus;
+    reading.focus = null;
+    const node = article.querySelector(`[data-item="${CSS.escape(id)}"]`);
+    if (node && node.scrollIntoView) node.scrollIntoView({ block: 'center' });
+    openReadingPanel(project, id);
+  } else if (reading.selected && reading.selected.project === project) {
+    openReadingPanel(project, reading.selected.id, true);
+  }
+}
+
+// What each tint means under the lens shown, with how many sentences carry it.
+function renderLegend() {
+  const legend = document.getElementById('reading-legend');
+  const view = reading.view;
+  if (!legend) return;
+  if (!view || !view.blocks || !view.blocks.length) {
+    replace(legend, []);
+    return;
+  }
+  const lens = readingLens();
+  const sentences = [...reading.index.values()].map((entry) => entry.item).filter((item) => item.type !== 'figure');
+  const counted = (test) => sentences.filter(test).length;
+  let rows;
+  if (lens === 'source') {
+    rows = SOURCE_LEGEND.map(([name, label]) => [{ 'data-source': name }, label, counted((item) => item.source === name)]);
+  } else if (lens === 'check') {
+    rows = CHECK_LEGEND.map(([name, label]) => [{ 'data-check': name }, label, counted((item) => item.check === name)]);
+  } else {
+    const shades = objectiveShades(view);
+    rows = (view.objectives || []).map((objective) => [{ 'data-objective': shades[objective.id] },
+      `${objective.id} ${objective.status === 'open' || objective.status === 'answered' ? '' : `(${objective.status}) `}${objective.text || ''}`,
+      counted((item) => objectiveOf(item, shades) === objective.id)]);
+    rows.push([{ 'data-objective': 'none' }, 'no objective', counted((item) => objectiveOf(item, shades) === null)]);
+  }
+  replace(legend, [el('ul', { class: 'legend-list paper-text', 'data-lens': lens }, rows.map(([marks, label, count]) =>
+    el('li', {}, [el('span', Object.assign({ class: 'sentence swatch' }, marks), [document.createTextNode('Aa')]),
+      el('span', { class: 'legend-label', text: label, title: label }), el('span', { class: 'count', text: String(count) })])))]);
+}
+
+// --- the panel ---
+
+function panelSection(name, children) {
+  return children.length ? [el('h3', { class: 'sub', text: name }), ...children] : [];
+}
+
+function tagLine(project, tag) {
+  const head = [el('span', { class: `chip s-${tag.kind || 'malformed'}`, text: tag.kind || 'tag' })];
+  const lines = [];
+  if (tag.kind === 'res') {
+    head.push(document.createTextNode(' run '), tag.ticket ? itemLink(project, String(tag.ticket), tag.run) : document.createTextNode(tag.run || '?'),
+      document.createTextNode(` · ${tag.path}#${tag.locator}`));
+    for (const line of tag.held || []) lines.push(el('code', { class: 'held', text: line }));
+  } else if (tag.kind === 'code') {
+    head.push(document.createTextNode(` ${tag.path}#${tag.locator}`));
+    for (const line of tag.held || []) lines.push(el('code', { class: 'held', text: line }));
+  } else if (tag.kind === 'ref') {
+    head.push(document.createTextNode(` ${tag.work || tag.slug || tag.tag}${tag.locator ? ` (${tag.locator})` : ''}`));
+    if (tag.mark) lines.push(el('span', { class: 'chip s-to-be-resolved', text: tag.mark }));
+  } else if (tag.kind === 'doc') {
+    head.push(document.createTextNode(' '), itemLink(project, tag.document), document.createTextNode(` at ${tag.locator}`));
+  } else {
+    head.push(document.createTextNode(` ${tag.tag}`));
+  }
+  if (tag.open) {
+    const open = el('button', { type: 'button', class: 'action', text: 'open' });
+    open.addEventListener('click', () => openViewer(tag.open, { title: tag.open, code: !/\.md$/i.test(tag.open) }));
+    head.push(document.createTextNode(' '), open);
+  }
+  if (tag.problem) lines.push(el('span', { class: 'problems', text: tag.problem }));
+  return el('li', { class: 'tag-line' }, [el('p', {}, head), ...lines]);
+}
+
+function verdictButton(check) {
+  const button = el('button', { type: 'button', class: 'action', text: 'the verdict' });
+  button.addEventListener('click', () => openViewer(null, {
+    title: `${check.check}: ${check.pass ? 'passed' : 'failed'}`,
+    fields: [['verdict', check.verdict_type], ['standing', check.pass ? 'passed' : 'failed'], ['model', check.model],
+      ['on Opus in place of', check.fallback_from], ['session', check.session_id], ['ticket', check.ticket], ['subject', check.subject],
+      ['when', check.ts], ['point', check.text],
+      ...(check.findings || []).map((finding, at) => [`finding ${at + 1}${finding.severity ? ` (${finding.severity})` : ''}`,
+        `${finding.text}${finding.locator ? ` at ${finding.locator}` : ''}`])],
+  }));
+  return button;
+}
+
+function checkLine(check) {
+  return el('li', { class: 'check-line' }, [el('p', {}, [statusChip(check.pass ? 'passed' : 'failed'), document.createTextNode(` ${check.check}`),
+    document.createTextNode(check.model ? ` (${check.model})` : ''), document.createTextNode(' '), verdictButton(check)]),
+    ...(check.findings || []).slice(0, 2).map((finding) => el('p', { class: 'row-more', text: finding.text })),
+    ...(check.text ? [el('p', { class: 'row-more', text: check.text })] : [])]);
+}
+
+function writtenLine(project, item) {
+  const head = [el('strong', { text: item.id || item.kind })];
+  if (item.kind === 'passage') head.push(document.createTextNode(` ${item.by === 'owner' ? 'your passage' : `passage by ${item.by}`} in ${item.section}`));
+  else head.push(document.createTextNode(' finding'));
+  if (item.ticket) head.push(document.createTextNode(' of ticket '), itemLink(project, String(item.ticket)));
+  if (item.run) head.push(document.createTextNode(`, run ${item.run}`));
+  if (item.result) head.push(document.createTextNode(', '), itemLink(project, item.result));
+  return el('li', {}, [el('p', {}, head), el('p', { class: 'row-more', text: item.text })]);
+}
+
+function itemLinks(project, ids) {
+  const nodes = [];
+  (ids || []).forEach((id, at) => {
+    if (at) nodes.push(document.createTextNode(' '));
+    nodes.push(itemLink(project, id));
+  });
+  return nodes;
+}
+
+function sentencePanel(project, item, part) {
+  const children = [renderInline(item.plain, part ? part.path : '', 'blockquote')];
+  children.push(el('p', { class: 'panel-line paper-text', 'data-lens': 'source' }, [
+    el('span', { class: 'sentence swatch', 'data-source': item.source }, [document.createTextNode('Aa')]),
+    document.createTextNode(` ${SOURCE_NAMES[item.source] || item.source}`),
+    ...(item.result || (item.objectives || []).length ? [document.createTextNode(' · '), ...itemLinks(project, [item.result, ...(item.objectives || [])].filter(Boolean))] : []),
+  ]));
+  children.push(...panelSection('where it comes from', item.tags.length ? [el('ul', { class: 'rows plain' }, item.tags.map((tag) => tagLine(project, tag)))]
+    : [emptyState(item.source === 'prose' ? 'no tag: the classifier read it as no claim' : 'no tag: nothing says where this claim comes from')]));
+  children.push(...panelSection('written from', item.from.length ? [el('ul', { class: 'rows plain' }, item.from.map((entry) => writtenLine(project, entry)))]
+    : [emptyState('no finding or passage shares its words or its tags')]));
+  children.push(...panelSection('checks', item.checks.length ? [el('ul', { class: 'rows plain' }, item.checks.map(checkLine))]
+    : [emptyState('never checked: no verdict in the journal and no build point names it')]));
+  return children;
+}
+
+function figurePanel(project, item) {
+  const children = [renderInline(item.caption, 'research/paper/', 'blockquote')];
+  children.push(el('p', { class: 'panel-line' }, [document.createTextNode(`status ${item.status || 'unknown'}`),
+    ...(item.result ? [document.createTextNode(' · draws '), ...itemLinks(project, [item.result, ...(item.objectives || [])])] : [])]));
+  const behind = [];
+  if (item.image) behind.push(viewButton(item.image, `Figure ${item.id.slice(1)}`, 'the image'));
+  if (item.script) {
+    const script = el('button', { type: 'button', class: 'action', text: 'the script' });
+    script.addEventListener('click', () => openViewer(item.script, { title: item.script, code: true }));
+    behind.push(script);
+  }
+  for (const data of item.data || []) {
+    const open = el('button', { type: 'button', class: 'action', text: `data: ${data.path}${data.run ? ` (${data.run})` : ''}` });
+    open.disabled = !data.open;
+    open.addEventListener('click', () => openViewer(data.path, { title: data.path, code: !/\.md$/i.test(data.path) }));
+    behind.push(open);
+  }
+  children.push(...panelSection('what stands behind it', behind.length ? [el('p', { class: 'inline acts' }, behind)] : []));
+  children.push(...panelSection('candidates the figure role ranked', (item.candidates || []).length ? [el('ul', { class: 'rows plain' }, item.candidates.map((candidate) =>
+    el('li', {}, [el('p', {}, [el('strong', { text: candidate.rank ? `rank ${candidate.rank}` : 'unranked' }),
+      document.createTextNode(` ${candidate.chart_type || candidate.index_id}`), document.createTextNode(candidate.rendered ? '' : ` (not drawn: ${candidate.error || 'no reason given'})`),
+      ...(candidate.png ? [document.createTextNode(' '), viewButton(candidate.png, `${item.id} candidate ${candidate.rank || ''}`)] : [])])])))] : []));
+  const checks = (item.checks || []).map((check) => el('li', {}, [el('p', {}, [statusChip(check.pass === null ? 'not run' : check.pass ? 'passed' : 'failed'),
+    document.createTextNode(` ${check.id}: ${check.detail}`)])]));
+  if (item.honesty) {
+    checks.push(el('li', {}, [el('p', {}, [statusChip(item.honesty.verdict === 'pass' ? 'passed' : 'failed'),
+      document.createTextNode(` the honesty verdict${item.honesty.model ? ` (${item.honesty.model})` : ''}`)]),
+      ...(item.honesty.findings || []).map((finding) => el('p', { class: 'row-more', text: `${finding.rule}: ${finding.text}` }))]));
+  }
+  children.push(...panelSection('checks', checks.length ? [el('ul', { class: 'rows plain' }, checks)] : [emptyState('never checked')]));
+  return children;
+}
+
+function openReadingPanel(project, id, quietly) {
+  const entry = reading.index.get(id);
+  const panel = document.getElementById('reading-panel');
+  if (!entry) {
+    if (!quietly) say(`${id}: not in the version shown`, true);
+    return;
+  }
+  reading.selected = { project, id };
+  const { item, part } = entry;
+  document.getElementById('reading-panel-title').textContent = item.type === 'figure' ? `Figure ${item.id.slice(1)} (${item.id})` : `${item.id} · ${part ? part.title : item.part}`;
+  const children = item.type === 'figure' ? figurePanel(project, item) : sentencePanel(project, item, part);
+  if (part && part.alternatives && part.alternatives.length) {
+    children.push(...panelSection(`the ${part.title.toLowerCase()}'s alternatives`, [el('ul', { class: 'rows nested' }, part.alternatives.map((alternative) => alternativeRow(project, alternative)))]));
+  }
+  const body = document.getElementById('reading-panel-body');
+  const kept = quietly ? body.scrollTop : 0;
+  replace(body, children);
+  body.scrollTop = kept;
+  for (const node of document.querySelectorAll('#reading-article .selected')) node.classList.remove('selected');
+  const node = document.querySelector(`#reading-article [data-item="${CSS.escape(id)}"]`);
+  if (node) node.classList.add('selected');
+  for (const button of [document.getElementById('reading-comment'), document.getElementById('reading-wrong')]) button.disabled = !TOKEN;
+  panel.hidden = false;
+  document.body.dataset.panel = 'open';
+}
+
+function closeReadingPanel() {
+  reading.selected = null;
+  document.getElementById('reading-panel').hidden = true;
+  document.body.dataset.panel = 'closed';
+  for (const node of document.querySelectorAll('#reading-article .selected')) node.classList.remove('selected');
+}
+
+// Comment and This is wrong: the note goes to the chat with the sentence's id attached, as a feedback or a mark the
+// conversation records; the view itself writes nothing.
+function noteOnSelected(wrong) {
+  const chosen = reading.selected;
+  if (!chosen) return;
+  reading.attached = { project: chosen.project, id: chosen.id };
+  insertIntoChat(chosen.project, wrong ? `This is wrong (${chosen.id}): ` : `Comment on ${chosen.id}: `);
+}
+
+function wireReading() {
+  segmented(document.getElementById('reading-lens'), LENSES.map(([name, label]) => ({ name, label })), setLens);
+  markChoice(document.getElementById('reading-lens'), readingLens());
+  document.getElementById('reading-panel-close').addEventListener('click', closeReadingPanel);
+  document.getElementById('reading-comment').addEventListener('click', () => noteOnSelected(false));
+  document.getElementById('reading-wrong').addEventListener('click', () => noteOnSelected(true));
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !document.getElementById('reading-panel').hidden && !chat.open
+      && !document.getElementById('viewer').open) closeReadingPanel();
+  });
 }
 
 // --- the chat (ticket 114) ----------------------------------------------------------------------
@@ -4103,13 +4537,20 @@ async function sendChat(event) {
   }
   const body = { text };
   // The view and the item open travel with the message, so what the owner says is read against what they see.
-  if (state.view && (state.view === 'projects' || state.project === project)) body.view = state.view;
+  // The reading view is Paper's own (ticket 141), and the chat knows the five views and the projects page.
+  if (state.view && (state.view === 'projects' || state.project === project)) body.view = state.view === 'reading' ? 'paper' : state.view;
   if (viewer.item && viewer.item.project === project && CHAT_ITEM.test(viewer.item.id)) body.item = viewer.item.id;
+  else {
+    // A sentence or a figure of the reading view: the one a Comment or This is wrong attached, else the one whose panel is open.
+    const shown = [reading.attached, reading.selected].find((entry) => entry && entry.project === project && CHAT_ITEM.test(entry.id));
+    if (shown) body.item = shown.id;
+  }
   const send = document.getElementById('chat-send');
   send.disabled = true;
   try {
     await chatPost(project, '', body);
     box.value = '';
+    reading.attached = null;
     chat.busy = true;
     chatPolling();
     chatSay('');
@@ -4176,6 +4617,7 @@ wireIntake();
 wireFeedback();
 wireChat();
 wireEditor();
+wireReading();
 intakeEmpty();
 if (!TOKEN) say('Actions need the dashboard token: open the URL wayline serve printed, which carries it. The views work without it.');
 window.addEventListener('hashchange', route);

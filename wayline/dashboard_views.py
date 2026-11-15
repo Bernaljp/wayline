@@ -26,6 +26,9 @@ so nothing is rendered twice. Inherited is offered only for a project with docum
 - `D1`, a document, which opens its converted text over Inherited;
 - `K3`, a concern, and `M2`, a missing item, which open `CONCERNS.md` and `VERIFICATIONS.md` at their headings;
 - `P5+P11`, a pair of the repeated-claims check, a contradiction or a merge, which opens both claims side by side;
+- `results.s12`, a sentence of the paper's current version, named by its part and its number in that part, and `F1`, a
+  main-text figure, which open the paper's reading view at it with its panel (ticket 141, `paper_reading`): a sentence or
+  a figure the version no longer holds names nothing;
 - `B3`, a batch, which the page opens in Marks at that batch rather than in the viewer, so it is no id here.
 
 An id that names nothing resolves to None, and the server answers 404 with one line the page shows in the viewer.
@@ -54,7 +57,8 @@ OBJECTIVES_MD = RESEARCH + "/OBJECTIVES.md"
 
 # Every id an item link may name, and nothing else: the route matches it before anything is read.
 ITEM_ID = re.compile(r"^(?:O[1-9][0-9]*|R[1-9][0-9]*(?:\.T?[1-9][0-9]*|-[1-9][0-9]*)?|[1-9][0-9]*|report|account|outline|"
-                     r"introduction|results|discussion|methods|references|[DKM][1-9][0-9]*|P[1-9][0-9]*(?:\+P[1-9][0-9]*)?)$")
+                     r"introduction|results|discussion|methods|references|[DKM][1-9][0-9]*|P[1-9][0-9]*(?:\+P[1-9][0-9]*)?|"
+                     r"(?:title|abstract|introduction|results|discussion|methods)\.s[1-9][0-9]*|F[1-9][0-9]*)$")
 
 
 def _events(project, problems):
@@ -1066,6 +1070,9 @@ def item_view(project, item):
         return _item("account", RUN_VIEW, item, "The account", ACCOUNT_MD) if (project / ACCOUNT_MD).is_file() else None
     if item.isdigit():
         return _ticket_item(project, int(item))
+    from wayline import paper_reading
+    if paper_reading.SENTENCE_ID.match(item) or paper_reading.FIGURE_ID.match(item):
+        return paper_reading.read_item(project, item)
     if item in _PAPER_FILES:
         return _paper_file_item(project, item)
     resolve = _BY_LETTER.get(item[0])

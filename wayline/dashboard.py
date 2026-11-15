@@ -1308,6 +1308,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/research/?$"), "api_research"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/run/?$"), "api_run"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/paper/?$"), "api_paper"),
+        (re.compile(r"^/api/projects/(?P<project>[^/]+)/paper/read/?$"), "api_paper_read"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/inherited/?$"), "api_inherited"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/marks/?$"), "api_marks"),
         (re.compile(r"^/api/projects/(?P<project>[^/]+)/waiting/?$"), "api_waiting"),
@@ -1685,6 +1686,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self._not_modified(tag):
             return None
         return self._json(dict(dashboard_views.paper_view(path), late=late), tag)
+
+    def api_paper_read(self, query, project):
+        """The paper's reading view (ticket 141): the current version's main text as blocks, each sentence with where it
+        comes from and what checked it, built by code with no model; tagged by the ledger and the paper's files."""
+        from wayline import paper_reading
+        path = self._project(project)
+        tag = etag("paper_read", project, self.server.memo.get(("ledger", str(path)), lambda: ledger_snapshot(path)),
+                   paper_reading.snapshot(path))
+        if self._not_modified(tag):
+            return None
+        return self._json(paper_reading.reading_view(path), tag)
 
     def api_inherited(self, query, project):
         """The Inherited view (ticket 111), tagged by the ledger and the section files; a project with no documents has none."""
