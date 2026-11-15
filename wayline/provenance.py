@@ -725,11 +725,12 @@ def _classes_problem(envelope, count):
 class Lint:
     """What the linter found in one document: whether it passes, the counts, every problem, and what it lists.
 
-    A problem is `{sentence, problem, tag, detail}`, `problem` one of the kinds above, with `passage` naming the
-    passage it is in when the linter read passages. `claims` counts the sentences classified as claims and `tagged`
-    those of them that end with a tag. `listed` holds what is shown and never failed (ticket 88): before the paper
-    order, a claim tagged only `doc` and an untagged claim in an owner's passage; at an acceptance, a sentence the
-    classifier has not classified.
+    A problem is `{sentence, problem, tag, detail}`, `problem` one of the kinds above, with `passage` naming the passage
+    it is in when the linter read passages. `claims` counts the sentences classified as claims; in the general report
+    (`lint`) it also counts a sentence the classifier has not read that ends with a tag other than `doc`, so an offline
+    render's count is an upper bound until the classifier reads (ticket 140). `tagged` counts those claims that end
+    with a tag. `listed` holds what is shown and never failed (ticket 88): before the paper order, a claim tagged only
+    `doc` and an untagged claim in an owner's passage; at an acceptance, a sentence the classifier has not classified.
     """
 
     passed: bool
@@ -856,10 +857,11 @@ def end_kinds(text):
 class _Pass:
     """One linter pass: the problems, the listed sentences, and the counts, over sentences fed in one at a time."""
 
-    def __init__(self, resolver, classes, doc_only_fails, unclassified_fails, unresolved_ref_fails=True):
+    def __init__(self, resolver, classes, doc_only_fails, unclassified_fails, unresolved_ref_fails=True, unread_tagged_claims=False):
         self.resolver, self.classes = resolver, classes
         self.doc_only_fails, self.unclassified_fails = doc_only_fails, unclassified_fails
         self.unresolved_ref_fails = unresolved_ref_fails
+        self.unread_tagged_claims = unread_tagged_claims
         self.problems, self.listed = [], []
         self.claims = self.tagged = self.unclassified = 0
 
@@ -894,6 +896,13 @@ class _Pass:
                           else "a claim sentence ends with at least one provenance tag")
                 entry = dict(extra, sentence=sentence.text, problem=UNTAGGED_CLAIM, tag=None, detail=detail)
                 (self.listed if owner else self.problems).append(entry)
+        elif kind is None and self.unread_tagged_claims and any(end != "doc" for end in ends):
+            # The general report's offline render (the conductor's, the tick's): not read by the classifier yet, but it
+            # ends with the provenance a claim carries, and nothing says it is not one, so it counts as a claim, and a
+            # tagged one, until the classifier reads it (ticket 140: the toy's night journaled `claims: 0` for 175
+            # tagged findings).
+            self.claims += 1
+            self.tagged += 1
         elif kind is None and not ends:
             self.unclassified += 1
             entry = dict(extra, sentence=sentence.text, problem=UNCLASSIFIED, tag=None,
@@ -914,10 +923,10 @@ def lint(project, markdown, classes, doc_only_fails=False, code_read=None):
     and a `doc` tag to a document the project keeps. Every sentence `classes` calls a claim must end
     with at least one tag; one whose only tags are `doc` tags is listed, or failed when
     `doc_only_fails` (the paper, after the order). An untagged sentence `classes` does not cover
-    fails too, because nothing then says it is not a claim. Records (between `RECORDS_BEGIN` and
-    `RECORDS_END`) are not read.
+    fails too, because nothing then says it is not a claim, and a tagged one it does not cover counts
+    as a claim (ticket 140). Records (between `RECORDS_BEGIN` and `RECORDS_END`) are not read.
     """
-    linted = _Pass(_Resolver(project, code_read), classes, doc_only_fails, unclassified_fails=True)
+    linted = _Pass(_Resolver(project, code_read), classes, doc_only_fails, unclassified_fails=True, unread_tagged_claims=True)
     for sentence in prose_sentences(markdown):
         linted.read(sentence)
     return linted.result()

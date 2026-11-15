@@ -913,7 +913,7 @@ def status_view(project, refresh=True):
         "hold": hold_status(project, events, harness, graph, tickets, view),
         # The objectives and their goals' best kept values, and the stopping rule and budgets (decision 17; ticket 87).
         "objectives": objectives_view(project, problems, events),
-        "stopping": stopping_view(harness, events),
+        "stopping": stopping_view(harness, events, jobs=_job_records(project)),
         "resources": resources,
         "events": events[-10:],
         "offset": offset,
@@ -1171,15 +1171,22 @@ def _waiting_on_fable(project, events, view, graph, fields, falls_back):
     return waiting
 
 
-def stopping_view(harness, events, now=None):
-    """The stopping rule and each budget, with what was used of it: what `status` shows in place of GOAL.json's stop (ticket 87)."""
+def stopping_view(harness, events, now=None, jobs=None):
+    """The stopping rule and each budget, with what was used of it: what `status` shows in place of GOAL.json's stop (ticket 87).
+
+    `jobs` are the job files by id (`stopping.job_records`), which the GPU hours read each attempt's end and share from."""
     from wayline import stopping  # the stopping module imports this one
     now = time.time() if now is None else now
     budgets = harness.get("budgets") or {}
-    used = {"wallclock_hours": stopping.wallclock_hours(events, now), "gpu_hours": stopping.gpu_hours(events, now)}
+    used = {"wallclock_hours": stopping.wallclock_hours(events, now), "gpu_hours": stopping.gpu_hours(events, now, jobs)}
     return {"rule": stopping.rule_of(harness), "line": stopping.describe_rule(stopping.rule_of(harness)),
             "budgets": {name: {"limit": budgets.get(name), "used": round(used[name], 2)} for name in stopping.BUDGETS},
-            "spent": [name for name, _, _ in stopping.spent(harness, events, now)]}
+            "spent": [name for name, _, _ in stopping.spent(harness, events, now, jobs)]}
+
+
+def _job_records(project):
+    from wayline import stopping  # the stopping module imports this one
+    return stopping.job_records(project)
 
 
 def objectives_view(project, problems=None, events=()):

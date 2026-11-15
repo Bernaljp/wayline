@@ -86,6 +86,19 @@ RADIUS_BOUNDS = {
     "exploratory": "`exploratory`: also one new question within the intent per wave, and new directions gated on a novelty check",
 }
 
+# What the "goal" class below changes (ticket 140). A goal word followed by the work it names ("the goal run's auroc", the
+# toy's analysis proposal; "the goal job's batch size") is not a goal; a measure or target word in a possessive naming a
+# run, a section, or a plot ("the target's plot") is not a measure; but the measure's parts said after the work they
+# belong to ("the goal run's target") are, and so is the eval command with its script or file, which it is.
+_GOAL_WORK = r"(?:run|job|ticket|result|finding|section|heading|plot|table|figure|report|file|key|script|log)s?"
+_MEASURE_NAMING = r"(?:run|job|ticket|finding|section|heading|plot|table|figure|report|log)s?"
+_MEASURE_PART = (r"(?:measure|target|threshold|metric|success criteri(?:on|a)|primary metric|eval(?:uation)? command"
+                 r"|held[- ]out (?:set|split|data))")
+_MEASURE_OBJECT = (r"(?:(?:measure|target)(?!(?:'s|’s)\s+" + _MEASURE_NAMING + r"\b)"
+                   r"|success criteri(?:on|a)|primary metric|goal metric|eval(?:uation)? command)")
+_GOAL_OBJECT = (r"(?:goal(?!(?:'s|’s)?\s+" + _GOAL_WORK + r"\b)|" + _MEASURE_OBJECT
+                + r"|goal\s+" + _GOAL_WORK + r"(?:'s|’s)\s+(?:new )?" + _MEASURE_PART + r")")
+
 # The irreversible list of decision 4, as classes a code check reads off an answer's words. Each pattern
 # names a change verb with its object, so an answer that keeps the goal, reads the data, or fetches a source
 # is not caught by the noun alone; the session is told the list too, and the two readings are both refusals.
@@ -123,12 +136,13 @@ IRREVERSIBLE = (
      r"|paid (?:tier|plan|api|account)|credit card|rent(?:s|ing)? (?:a |an |the |more )?(?:gpus?|instances?|servers?|machines?)"
      r"|cloud (?:instances?|credits))\b"),
     # Decision 17 (ticket 91): changing a goal's measure; adding, answering, parking, dropping, reframing, and reopening an
-    # objective left the list, so "drop the goal" and "a new goal" are not caught.
+    # objective left the list, so "drop the goal" and "a new goal" are not caught. Work that only names a goal is not a
+    # change of it (ticket 140): see `_GOAL_OBJECT`.
     ("goal",
      r"\b((?:chang(?:e|es|ing)|replac(?:e|es|ing)|redefin(?:e|es|ing)|relax(?:es|ing)?|lower(?:s|ing)?|rais(?:e|es|ing)"
      r"|swap(?:s|ping)?|revis(?:e|es|ing)|rewrit(?:e|es|ing)|switch(?:es|ing)?|set(?:s|ting)?|mov(?:e|es|ing)|loosen(?:s|ing)?|tighten(?:s|ing)?)"
-     r" (?:the |our |its |a |an )?(?:new )?(?:goal|measure|target|success criteri(?:on|a)|primary metric|goal metric|eval(?:uation)? command)"
-     r"|drop(?:s|ping)? (?:the |our |its |a |an )?(?:goal's )?(?:measure|target|success criteri(?:on|a)|primary metric|goal metric|eval(?:uation)? command)"
+     r" (?:the |our |its |a |an )?(?:new )?" + _GOAL_OBJECT +
+     r"|drop(?:s|ping)? (?:the |our |its |a |an )?(?:goal's )?" + _MEASURE_OBJECT +
      r"|the goal becomes|a new target)\b"),
     ("data",
      r"\b((?:chang(?:e|es|ing)|replac(?:e|es|ing)|swap(?:s|ping)?|drop(?:s|ping)?|re-?split(?:s|ting)?|redefin(?:e|es|ing)|regenerat(?:e|es|ing)"
