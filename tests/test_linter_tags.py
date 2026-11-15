@@ -172,11 +172,12 @@ class LintResultTest(LintCase):
     def test_a_claim_ending_in_a_bracketed_tag_fails_saying_tags_are_written_in_braces(self):
         # The toy's live run (ticket 122): drawings R4 and R5 wrote their tags in square brackets, twice (ticket 135).
         for text in ("The gap peaks at 0.42 [res:drawings/R4-1/numbers.json#max_sigmoid_minus_true].",
-                     "The phase is fitted by least squares [code:code/phase.py#fit]."):
+                     "The phase is fitted by least squares [code:code/phase.py#fit].",
+                     "The cells synchronise [doc:D1#p2.s1]."):
             with self.subTest(text=text):
                 (problem,) = self.lint(self.result(text), claims(text)).problems
                 self.assertEqual(problem["problem"], provenance.UNTAGGED_CLAIM)
-                self.assertIn("tags are written {res:...}", problem["detail"])
+                self.assertIn("tags are written `{res:...}`", problem["detail"])
 
     def test_a_sentence_that_is_not_a_claim_needs_no_tag(self):
         text = "We describe the fit below."
@@ -326,6 +327,15 @@ class AtAcceptanceTest(ConductorCase):
                      (done(1, passages=[self.passage("The file holds one line {code:hello.txt#L1}.")]), None),
                      classifier=lambda texts: claims(*texts))
         self.assertIn("untagged_claim", self.line(self.worktree_acceptances()[0])["tail"])
+        self.assertTrue(self.worktree_acceptances()[-1]["pass"])
+
+    def test_a_claim_ending_in_a_bracketed_tag_sends_the_worker_back_told_tags_are_written_in_braces(self):
+        # Drawings R4 and R5 on the toy's live run resumed with no word of the form, and guessed it again (ticket 135).
+        self.conduct((done(1, passages=[self.passage("The file holds one line [code:hello.txt#L1].")]), patch()),
+                     (done(1, passages=[self.passage("The file holds one line {code:hello.txt#L1}.")]), None),
+                     classifier=lambda texts: claims(*texts))
+        self.assertIn("tags are written `{res:...}`", self.line(self.worktree_acceptances()[0])["tail"])
+        self.assertIn("tags are written `{res:...}`", [call for call in self.calls if call.kind == "resume"][0].message)
         self.assertTrue(self.worktree_acceptances()[-1]["pass"])
 
     def test_a_sentence_the_classifier_could_not_classify_is_listed_and_passes(self):

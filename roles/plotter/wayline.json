@@ -5,7 +5,7 @@
   "applicability_tags": {"kinds": [], "data_types": [], "libraries": ["matplotlib", "seaborn", "altair", "ggplot2"], "venues": []},
   "cost_hint": "small",
   "fixtures": [],
-  "sha256": "49baf2ffbce3e404ea525429167b5c515f464d710806b0e2748a583c3ec91de0",
+  "sha256": "f86860b53d077ffcdabd5c48814831fe9b37e8f2255d60f91a1babf10a7de016",
   "may_judge": false,
   "output_schema": "result",
   "allowed_tools": [

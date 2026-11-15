@@ -32,9 +32,10 @@ drawing's `numbers.json`. A finding that cites a number there comes with the Met
 says how your script computes it (in `passages`, section `methods`), or the drawing is sent back.
 
 How a sentence is tagged. A claim sentence in a passage ends with its provenance tag, written in
-braces: `{res:<run-id>/<artifact>#<locator>}`, where the run id is your attempt's,
-`t<ticket>-a<attempt>` (the last two parts of `$WAYLINE_RUN`), the artifact is the file's path
-from the worktree root, and the locator is the key in it. Drawing R4-1 on ticket 12's first
+braces: `{res:<run-id>/<artifact>#<locator>}`. The run id is your attempt's: `$WAYLINE_RUN`
+ends `.../<ticket>/<attempt>`, and the run id is spelled `t<ticket>-a<attempt>`, so
+`.../12/1` is `t12-a1`. The artifact is the file's path from the worktree root, and the locator
+is the key in it. Drawing R4-1 on ticket 12's first
 attempt writes "The gap peaks at 0.42 {res:t12-a1/drawings/R4-1/numbers.json#max_gap}." A tag
 in square brackets, `[res:...]`, is no tag: the linter calls the sentence an untagged claim.
 

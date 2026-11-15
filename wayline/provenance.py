@@ -516,15 +516,21 @@ VENUE_PREFIX = "paper venue: "  # the answer a `decision` on the paper's venue o
 
 # The tags a claim sentence ends with: after its full stop, as code writes a finding's, or just before it, as a worker
 # writes a passage's (`... least squares {code:code/phase.py#fit}.`); a tag with words after it is inside the sentence.
-_TAGS_AT_END = re.compile(r"""(?:\{(?:res|ref|code|doc):[^{}]+\}\s*)+[.!?"')\]]*\s*$""")
+_KINDS = "|".join(TAG_KINDS)
+_SENTENCE_END = r"""[.!?"')\]]*\s*$"""  # what may follow a sentence's last tag: its full stop, closing quotes, brackets
+_TAGS_AT_END = re.compile(r"""(?:\{(?:%s):[^{}]+\}\s*)+""" % _KINDS + _SENTENCE_END)
 # A tag in square brackets where the braces belong (`... 0.42 [res:drawings/R4-1/numbers.json#gap].`), the form the
 # toy's plotter guessed twice on its live run (ticket 135): no tag to the linter, and its message says what one is.
-_BRACKETED_AT_END = re.compile(r"""\[(?:res|ref|code|doc):[^\[\]]+\]\s*[.!?"')\]]*\s*$""")
-# What the linter tells a worker whose claim ends untagged: the form a tag takes, so a resume does not guess it.
-TAG_FORMS = "`{res:<run-id>/<artifact>#<locator>}`, `{ref:<slug>#<locator>}`, or `{code:<path>#<symbol>}`"
-UNTAGGED = "a claim sentence ends with at least one provenance tag: %s" % TAG_FORMS
-BRACKETED_TAG = ("its tag is in square brackets, which the linter does not read: tags are written {res:...}, in braces, "
-                 "as %s" % TAG_FORMS)
+# Every kind is matched, `doc` too: the brackets are the mistake, whichever kind the worker meant.
+_BRACKETED_AT_END = re.compile(r"""\[(?:%s):[^\[\]]+\]\s*""" % _KINDS + _SENTENCE_END)
+# What the linter tells a worker whose claim ends untagged: the form a tag takes, so a resume does not guess it. The
+# forms named are the three that support a claim; a `doc` tag says where inherited text came from and never what
+# supports it (decision 17), so a claim tagged only `doc` is still listed or failed, and naming it would mislead.
+CLAIM_TAG_FORMS = "`{res:<run-id>/<artifact>#<locator>}`, `{ref:<slug>#<locator>}`, or `{code:<path>#<symbol>}`"
+UNTAGGED_DETAIL = "a claim sentence ends with at least one provenance tag: %s" % CLAIM_TAG_FORMS
+TAGS_INSIDE_DETAIL = "its tags are inside it; a claim sentence ends with them"
+BRACKETED_TAG_DETAIL = ("its tag is in square brackets, which the linter does not read: tags are written `{res:...}`, in "
+                        "braces, and a claim ends with %s" % CLAIM_TAG_FORMS)
 _FOOTNOTE = re.compile(r"^\[\^(\d+)\]:\s*`(res|ref):([^`]+)`\s*$")
 _CITATION = re.compile(r"\[\^(\d+)\](?!:)")
 _LIST_ITEM = re.compile(r"^(?:[-*+]|\d+[.)])\s+")
@@ -898,8 +904,8 @@ class _Pass:
                              detail="its only tags are `doc` tags, which say where inherited text came from and never what supports it")
                 (self.problems if self.doc_only_fails else self.listed).append(entry)
             else:
-                detail = ("its tags are inside it; a claim sentence ends with them" if sentence.tags
-                          else BRACKETED_TAG if _BRACKETED_AT_END.search(sentence.text) else UNTAGGED)
+                detail = (TAGS_INSIDE_DETAIL if sentence.tags
+                          else BRACKETED_TAG_DETAIL if _BRACKETED_AT_END.search(sentence.text) else UNTAGGED_DETAIL)
                 entry = dict(extra, sentence=sentence.text, problem=UNTAGGED_CLAIM, tag=None, detail=detail)
                 (self.listed if owner else self.problems).append(entry)
         elif kind is None and not ends:
