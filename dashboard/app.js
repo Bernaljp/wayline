@@ -4009,7 +4009,7 @@ function shadeOf(item, shades) {
   return first ? shades[first] : 'none';
 }
 
-function markItem(node, item, shades) {
+function tintItem(node, item, shades) {
   node.dataset.item = item.id;
   node.dataset.source = item.source;
   node.dataset.objective = shadeOf(item, shades);
@@ -4071,7 +4071,7 @@ function renderReading(view, project) {
       reading.index.set(block.id, { item: block, part });
       const image = block.image ? el('img', { src: downloadUrl(block.image), alt: `Figure ${block.id.slice(1)}: ${block.caption}` })
         : emptyState(`${block.id} has no image a browser can draw`);
-      article.appendChild(markItem(el('figure', { class: 'paper-figure', 'aria-label': `Figure ${block.id.slice(1)}` }, [
+      article.appendChild(tintItem(el('figure', { class: 'paper-figure', 'aria-label': `Figure ${block.id.slice(1)}` }, [
         image, el('figcaption', {}, [el('strong', { text: `Figure ${block.id.slice(1)}. ` }), renderInline(block.caption, partPath)]),
       ]), block, shades));
     } else if (block.type === 'paragraph') {
@@ -4080,7 +4080,7 @@ function renderReading(view, project) {
       block.sentences.forEach((sentence, at) => {
         reading.index.set(sentence.id, { item: sentence, part });
         if (at) paragraph.appendChild(document.createTextNode(' '));
-        paragraph.appendChild(markItem(renderInline(sentence.plain, partPath, 'span'), sentence, shades));
+        paragraph.appendChild(tintItem(renderInline(sentence.plain, partPath, 'span'), sentence, shades));
       });
       for (const node of paragraph.querySelectorAll('[data-item]')) node.classList.add('sentence');
       article.appendChild(paragraph);

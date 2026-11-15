@@ -1052,6 +1052,12 @@ class PageDesignTest(unittest.TestCase):
                 self.assertIsNone(self.EXTERNAL.search(text), "%s reaches off the workstation" % path.name)
                 self.assertNotIn("@import", text, "%s imports a stylesheet it does not serve" % path.name)
 
+    def test_no_two_functions_of_the_script_share_a_name(self):
+        # A second declaration replaces the first for the whole page with no error: ticket 141's reading view once
+        # declared a `markItem` of its own, and Marks drew nothing.
+        names = re.findall(r"^(?:async )?function ([A-Za-z0-9_$]+)", self.SCRIPT.read_text(encoding="utf-8"), re.M)
+        self.assertEqual(sorted({name for name in names if names.count(name) > 1}), [])
+
     def test_the_page_asks_for_no_file_the_dashboard_directory_does_not_hold(self):
         page = self.PAGE.read_text(encoding="utf-8")
         for reference in re.findall(r'(?:href|src)="([^"]+)"', page):
