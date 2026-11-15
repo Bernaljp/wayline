@@ -74,7 +74,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from wayline import HARNESS_ROOT, RESEARCH_VERSION, TAG, dag, dashboard_views, decisions
+from wayline import HARNESS_ROOT, RESEARCH_VERSION, TAG, dag, dashboard_views, decisions, replay
 from wayline.ledger import TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, Ledger, atomic_write, conductor_holder, now_ts
 from wayline.project import (
     FINDINGS, HARNESS_JSON, NEEDS_HUMAN_NOTES, RESEARCH, ProjectError, active_path, answer, control, home, is_project, policy_for, rung_label,
@@ -82,7 +82,7 @@ from wayline.project import (
     old_project_problem, research_version, status_view, steer_ticket, switch_project,
 )
 from wayline.provenance import MANIFEST as MANIFEST_JSON, read_manifest, sha256_of
-from wayline.tickets import frontier, read_ticket, read_tickets, refresh_graph, tickets_dir
+from wayline.tickets import answered_entry, answered_graph, frontier, read_ticket, read_tickets, tickets_dir
 
 __all__ = [
     "DashboardError", "STATIC_ROOT", "LOOPBACK", "TOKEN_HEADER", "TOKEN_COOKIE", "SSE_RETRY_MS",
@@ -582,14 +582,16 @@ def _journal_size(ledger):
 
 
 def graph_svg(project):
-    """The ticket DAG as inline SVG: `dag.svg` over `refresh_graph(write=False)`, frontier-highlighted.
+    """The ticket DAG as inline SVG: `dag.svg` over `answered_graph(write=False)`, frontier-highlighted.
 
     Read-only like `overview_view`: a poll must not take the ledger's lock to regenerate
-    `graph.json`. A project with no tickets yet draws an empty canvas rather than raising, since
-    `dag.layout` has no row to measure a width from when there are no nodes.
+    `graph.json`. A decision ticket the journal answered is drawn done (ticket 131); a journal that
+    cannot be read draws the graph of the ticket files alone, as `status` does. A project with no
+    tickets yet draws an empty canvas rather than raising, since `dag.layout` has no row to measure
+    a width from when there are no nodes.
     """
     project = Path(project)
-    graph, _ = refresh_graph(project, write=False)
+    graph, _ = answered_graph(project, _events_or_empty(project), write=False)
     entries = graph["tickets"]
     if not entries:
         return '<svg viewBox="0 0 0 0" xmlns="http://www.w3.org/2000/svg"></svg>\n'
@@ -601,8 +603,22 @@ def graph_svg(project):
 
 
 def tickets_view(project):
-    """Every ticket's frontmatter, by id: the list a graph node's click opens one of."""
-    return read_tickets(Path(project))
+    """Every ticket's frontmatter, by id: the list a graph node's click opens one of, and the board's cards.
+
+    A decision ticket the journal answered reads `done`, as the graph draws it (ticket 131), so the board moves it out of
+    "needs you" when the answer is journaled rather than at the conductor's next wave.
+    """
+    project = Path(project)
+    answers = replay.replay(_events_or_empty(project)).answers
+    return [answered_entry(fields, answers) for fields in read_tickets(project)]
+
+
+def _events_or_empty(project):
+    """The journal's events, or none when it cannot be read: a view of the ticket files still draws without it."""
+    try:
+        return Ledger(project).read_events()[0]
+    except OSError:
+        return []
 
 
 _ATTEMPT_NAME = re.compile(r"^\d+$")

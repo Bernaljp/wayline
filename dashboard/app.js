@@ -2053,10 +2053,6 @@ function decisionCard(decision, project) {
     card.appendChild(el('h5', { text: 'evidence' }));
     card.appendChild(el('ul', {}, decision.evidence.map((item) => el('li', { text: item }))));
   }
-  if (decision.answered) {
-    card.appendChild(el('p', { class: 'note', text: `answered by the ${decision.answered.decided_by}: ${decision.answered.answer}. The conductor closes it at its next wave, and the tick relaunches one when none runs.` }));
-    return card;
-  }
   if (decision.written) {
     card.appendChild(el('p', { class: 'note', text: `an answer is written in the ticket file: ${decision.written}. The next wave or tick journals it as the owner's.` }));
     return card;
