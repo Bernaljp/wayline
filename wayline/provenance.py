@@ -517,6 +517,14 @@ VENUE_PREFIX = "paper venue: "  # the answer a `decision` on the paper's venue o
 # The tags a claim sentence ends with: after its full stop, as code writes a finding's, or just before it, as a worker
 # writes a passage's (`... least squares {code:code/phase.py#fit}.`); a tag with words after it is inside the sentence.
 _TAGS_AT_END = re.compile(r"""(?:\{(?:res|ref|code|doc):[^{}]+\}\s*)+[.!?"')\]]*\s*$""")
+# A tag in square brackets where the braces belong (`... 0.42 [res:drawings/R4-1/numbers.json#gap].`), the form the
+# toy's plotter guessed twice on its live run (ticket 135): no tag to the linter, and its message says what one is.
+_BRACKETED_AT_END = re.compile(r"""\[(?:res|ref|code|doc):[^\[\]]+\]\s*[.!?"')\]]*\s*$""")
+# What the linter tells a worker whose claim ends untagged: the form a tag takes, so a resume does not guess it.
+TAG_FORMS = "`{res:<run-id>/<artifact>#<locator>}`, `{ref:<slug>#<locator>}`, or `{code:<path>#<symbol>}`"
+UNTAGGED = "a claim sentence ends with at least one provenance tag: %s" % TAG_FORMS
+BRACKETED_TAG = ("its tag is in square brackets, which the linter does not read: tags are written {res:...}, in braces, "
+                 "as %s" % TAG_FORMS)
 _FOOTNOTE = re.compile(r"^\[\^(\d+)\]:\s*`(res|ref):([^`]+)`\s*$")
 _CITATION = re.compile(r"\[\^(\d+)\](?!:)")
 _LIST_ITEM = re.compile(r"^(?:[-*+]|\d+[.)])\s+")
@@ -891,7 +899,7 @@ class _Pass:
                 (self.problems if self.doc_only_fails else self.listed).append(entry)
             else:
                 detail = ("its tags are inside it; a claim sentence ends with them" if sentence.tags
-                          else "a claim sentence ends with at least one provenance tag")
+                          else BRACKETED_TAG if _BRACKETED_AT_END.search(sentence.text) else UNTAGGED)
                 entry = dict(extra, sentence=sentence.text, problem=UNTAGGED_CLAIM, tag=None, detail=detail)
                 (self.listed if owner else self.problems).append(entry)
         elif kind is None and not ends:

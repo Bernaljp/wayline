@@ -6,6 +6,7 @@ the spec fixes, because that order is the contract between the conductor and eve
 """
 
 import json
+import re
 import shutil
 import tempfile
 import unittest
@@ -518,6 +519,42 @@ class InlinedSkillTest(unittest.TestCase):
         text = self.assemble(["alpha", "beta"]).text
         self.assertIn("````", text)
         self.assertIn("wayline accept", text)
+
+
+class TagFormTest(unittest.TestCase):
+    """Every role prompt that asks for tagged sentences states the form a tag takes (ticket 135).
+
+    The toy's live run (ticket 122): the plotter's prompt never said, so drawings R4 and R5 wrote
+    `[res:...]`, which the linter does not read, and their resumes guessed the same form again. A
+    role's prompt is its system prompt and its protocol, as `worker.read_role` reads them.
+    """
+
+    # Wording that asks a role for tagged sentences.
+    ASKS = re.compile(r"provenance tag|claim sentences? end|tagged at|ending with its tag|\{(?:res|ref|code|doc):", re.I)
+    # A tag written in its braces, `{res:...}`, `{ref:...}`, `{code:...}`, `{doc:...}`.
+    FORM = re.compile(r"\{(?:res|ref|code|doc):[^{}\s]+\}")
+    # The classifier reads tagged sentences and writes none: what rides on its answer is a writer's tag.
+    WRITES_NONE = {"classifier"}
+
+    @staticmethod
+    def prompts():
+        for folder in sorted((HARNESS_ROOT / "roles").iterdir()):
+            if (folder / "agent.md").is_file():
+                role = worker.read_role(folder.name)
+                yield role.name, role.system_prompt + "\n" + role.protocol
+
+    def test_every_role_prompt_that_asks_for_tags_states_their_form(self):
+        asking = [name for name, text in self.prompts() if self.ASKS.search(text) and name not in self.WRITES_NONE]
+        self.assertIn("writer", asking)  # the check reads the prompts it means to
+        for name, text in self.prompts():
+            if name in asking:
+                with self.subTest(role=name):
+                    self.assertRegex(text, self.FORM)
+
+    def test_the_plotters_prompt_states_the_res_form_with_an_example(self):
+        text = dict(self.prompts())["plotter"]
+        self.assertIn("{res:<run-id>/<artifact>#<locator>}", text)
+        self.assertRegex(text, r"\{res:t[0-9]+-a[0-9]+/drawings/R[0-9]+-[0-9]+/numbers\.json#\w+\}")
 
 
 if __name__ == "__main__":

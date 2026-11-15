@@ -164,6 +164,20 @@ class LintResultTest(LintCase):
         lint = self.lint(self.result(text), claims(text))
         self.assertEqual(self.kinds(lint), [provenance.UNTAGGED_CLAIM])
 
+    def test_an_untagged_claims_message_names_the_form_a_tag_takes(self):
+        text = "The phase locks within ten cycles."
+        (problem,) = self.lint(self.result(text), claims(text)).problems
+        self.assertIn("{res:<run-id>/<artifact>#<locator>}", problem["detail"])
+
+    def test_a_claim_ending_in_a_bracketed_tag_fails_saying_tags_are_written_in_braces(self):
+        # The toy's live run (ticket 122): drawings R4 and R5 wrote their tags in square brackets, twice (ticket 135).
+        for text in ("The gap peaks at 0.42 [res:drawings/R4-1/numbers.json#max_sigmoid_minus_true].",
+                     "The phase is fitted by least squares [code:code/phase.py#fit]."):
+            with self.subTest(text=text):
+                (problem,) = self.lint(self.result(text), claims(text)).problems
+                self.assertEqual(problem["problem"], provenance.UNTAGGED_CLAIM)
+                self.assertIn("tags are written {res:...}", problem["detail"])
+
     def test_a_sentence_that_is_not_a_claim_needs_no_tag(self):
         text = "We describe the fit below."
         lint = self.lint(self.result(text), {provenance.sentence_hash(text): provenance.TRANSITION})
