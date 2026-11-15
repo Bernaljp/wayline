@@ -1177,7 +1177,7 @@ main { padding-bottom: calc(var(--space-6) + var(--space-5)); }
 
 .paper-text { font-family: var(--prose); }
 article.paper-text { max-width: 74ch; font-size: var(--text-lg); line-height: 1.75; color: var(--ink); }
-.paper-text .paper-title { font-size: var(--text-xl); line-height: 1.4; margin: 0 0 var(--space-4); }
+.paper-text .paper-title { font-size: var(--text-xl); line-height: 1.4; margin: 0 0 var(--space-4); font-family: var(--prose); letter-spacing: 0; text-transform: none; }
 .paper-text .part-head {
   font-size: var(--text-md); letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim);
   margin: var(--space-6) 0 var(--space-2); border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
@@ -1235,7 +1235,7 @@ article.paper-text { max-width: 74ch; font-size: var(--text-lg); line-height: 1.
   background: var(--surface); color: var(--ink); border: 1px solid var(--line-strong); border-radius: var(--radius-2);
 }
 .reading-panel[hidden] { display: none; }
-.reading-panel .viewer-bar h2 { font-size: var(--text-md); overflow-wrap: anywhere; }
+.reading-panel .viewer-bar h2 { font-size: var(--text-md); overflow-wrap: anywhere; letter-spacing: 0; text-transform: none; }
 .reading-panel-body { flex: 1 1 auto; overflow-y: auto; padding: var(--space-3); min-width: 0; }
 .reading-panel-body blockquote {
   margin: 0 0 var(--space-3); padding-left: var(--space-3); border-left: 3px solid var(--line-strong);
