@@ -18,4 +18,4 @@ On the toy's live run (ticket 122, `docs/verification/m8.md`), drawings R4 and R
 
 - [x] The plotter's prompt names the `{res:...}` form; a test reads every role prompt that asks for tags.
 - [x] A sentence ending in `[res:...]` fails with a message naming the right form.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
