@@ -43,7 +43,7 @@ from wayline.ledger import PAPER_STARTED, ledger_for
 __all__ = [
     "FigurePlanError", "PANELS_PER_PAGE", "AS_PLANNED", "TO_SUPPLEMENT", "SPLIT", "DROP", "NO_FIGURE", "FROM_NOTHING", "is_figure_ref",
     "build", "batch_items", "plan_lines", "request_for", "figure_id", "make_figures", "write", "label", "writer_lines",
-    "report_lines", "display_limit",
+    "report_lines", "display_limit", "by_first_citation", "plan_ids", "relabel",
 ]
 
 PANELS_PER_PAGE = 9  # a full-width figure on one page: three rows of three panels at 180 mm by 170 mm
@@ -242,17 +242,17 @@ def build(project, answers=(), *, autonomous=False, venue=None, limit=None, pane
             figures.append({"id": "F%d" % (len(figures) + 1), "result": row["result"], "heading": row["heading"], "main": True,
                             "panels": list(panels), "how": "a figure from nothing, on request" if row["from_nothing"] else row["how"],
                             "part": part, "parts": len(row["figures"]), "from_nothing": row["from_nothing"]})
-        for plot in row["tables"]:  # one at a time: each table its own number, two of one result too
-            tables.append({"id": "T%d" % (len([t for t in tables if t["main"]]) + 1), "result": row["result"], "plot": plot, "main": True})
+        tables += [{"result": row["result"], "plot": plot, "main": True} for plot in row["tables"]]
     for row in rows:
         pages = _split(row["rest"], panels_per_page) if row["rest"] else []
         for part, panels in enumerate(pages, start=1):  # a supplementary figure too keeps to a page
             supplementary.append({"id": "S%d" % (len(supplementary) + 1), "result": row["result"], "heading": row["heading"],
                                   "main": False, "panels": list(panels), "how": "its other plots", "part": part,
                                   "parts": len(pages), "from_nothing": False})
-        for plot in row["rest_tables"]:
-            tables.append({"id": "ST%d" % (len([t for t in tables if not t["main"]]) + 1), "result": row["result"], "plot": plot,
-                           "main": False})
+        tables += [{"result": row["result"], "plot": plot, "main": False} for plot in row["rest_tables"]]
+    for main, prefix in ((True, "T"), (False, "ST")):  # each table its own number, two of one result too (ticket 139)
+        for number, table in enumerate([table for table in tables if table["main"] is main], start=1):
+            table["id"] = "%s%d" % (prefix, number)
     marks = {}
     for row in rows:
         marks.update(row["marks"])
@@ -262,6 +262,68 @@ def build(project, answers=(), *, autonomous=False, venue=None, limit=None, pane
         table.update(sources[table["plot"]])
     return {"venue": venue, "limit": limit, "figures": figures, "supplementary": supplementary, "tables": tables,
             "left_out": left_out, "moved": moved, "without": without, "oversized": oversized, "per_page": panels_per_page}
+
+
+# How a text cites a supplementary item: "Supplementary Table S2", "Table S2", "Supplementary Figure S1", "Fig. S1".
+_CITED = re.compile(r"\b((?:Supplementary\s+)?(?:(Table)|Figure|Fig\.)\s+S)([1-9][0-9]*)\b")
+
+
+def by_first_citation(plan, made, texts, inherited=None):
+    """`(plan, made, renamed)`: the supplementary figures and tables numbered again in order of first citation through
+    `texts` (the composed parts in reading order), each kind on its own, an item no text cites after the cited ones in
+    the plan's order (ticket 139). `made` is `make_figures`'s, keyed by the new ids; `renamed` maps each id that changed
+    to its new one, for `relabel`. `inherited` is the id the inherited results' table holds after the plan's
+    supplementary tables, when the supplement carries one; the plan's `inherited_table` is the id it holds now."""
+    figures = [figure["id"] for figure in plan["supplementary"]]
+    tables = [table["id"] for table in plan["tables"] if not table["main"]] + ([inherited] if inherited else [])
+    first = []
+    for text in texts:
+        for found in _CITED.finditer(str(text or "")):
+            identifier = ("ST" if found.group(2) else "S") + found.group(3)
+            if identifier not in first and identifier in figures + tables:
+                first.append(identifier)
+    renamed = {}
+    for prefix, held in (("S", figures), ("ST", tables)):
+        ordered = [item for item in first if item in held] + [item for item in held if item not in first]
+        renamed.update({old: "%s%d" % (prefix, number) for number, old in enumerate(ordered, start=1)})
+    ranked = lambda item: int(re.sub(r"^[A-Z]+", "", item["id"]))
+    supplementary = [dict(figure, id=renamed[figure["id"]], line=renamed[figure["id"]] + figure["line"][len(figure["id"]):])
+                     for figure in plan["supplementary"]]
+    tables_now = [table if table["main"] else dict(table, id=renamed[table["id"]]) for table in plan["tables"]]
+    fresh = dict(plan, supplementary=sorted(supplementary, key=ranked),
+                 tables=[table for table in tables_now if table["main"]] + sorted([table for table in tables_now if not table["main"]],
+                                                                                  key=ranked))
+    if inherited:
+        fresh["inherited_table"] = renamed[inherited]
+    made = {renamed.get(identifier, identifier): entry for identifier, entry in (made or {}).items()}
+    return fresh, made, {old: new for old, new in renamed.items() if old != new}
+
+
+def plan_ids(block, plan):
+    """`{id: plan id}`: each supplementary item of the last version's `figures` block (`block`) by the id this plan gives
+    the same item, a figure by its plan line and a table by its plot, so a part kept from that version cites by the
+    plan's ids again (`relabel`) before the items are numbered by first citation."""
+    figures = {figure["line"][len(figure["id"]):]: figure["id"] for figure in plan["supplementary"]}
+    tables = {table["plot"]: table["id"] for table in plan["tables"] if not table["main"]}
+    back = {}
+    for entry in (block or {}).get("figures") or []:
+        if not entry.get("main") and entry["line"][len(entry["id"]):] in figures:
+            back[entry["id"]] = figures[entry["line"][len(entry["id"]):]]
+    for entry in (block or {}).get("tables") or []:
+        if not entry.get("main") and entry.get("plot") in tables:
+            back[entry["id"]] = tables[entry["plot"]]
+    return {old: new for old, new in back.items() if old != new}
+
+
+def relabel(text, renamed):
+    """`text` with each citation of a supplementary item renumbered by `renamed` (`by_first_citation`'s), all at once."""
+    if not renamed or not isinstance(text, str):
+        return text
+
+    def named(found):
+        identifier = ("ST" if found.group(2) else "S") + found.group(3)
+        return found.group(1) + renamed.get(identifier, identifier)[len("ST" if found.group(2) else "S"):]
+    return _CITED.sub(named, text)
 
 
 def _line(figure, marks):

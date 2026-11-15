@@ -269,12 +269,25 @@ class MethodsToCodeTest(InventoryCase):
         # Never failed: the section renders, and the Methods passages all stand.
         self.assertEqual(sections.current_ids(self.ledger, "methods"), {backed["id"], filtered["id"], missing["id"]})
 
-    def test_code_availability_with_every_method_backed_says_so_in_one_sentence(self):
+    def code_availability(self):
         from wayline import paper
+        return paper.front_text(self.project).split("## Code availability\n\n", 1)[1]
+
+    def test_code_availability_with_every_method_backed_says_so_in_one_sentence(self):
+        from tests.test_paper import repository_settled
+        repository_settled(self.project)
         self.methods_passage("The phase is taken from the analytic signal.")
-        said = paper.front_text(self.project).split("## Code availability\n\n", 1)[1]
+        said = self.code_availability()
         self.assertIn("The code repository reproduces every method the Methods names.", said)
         self.assertNotIn("except", said)
+
+    def test_code_availability_with_no_method_in_the_methods_claims_nothing(self):
+        from tests.test_paper import repository_settled
+        repository_settled(self.project)
+        self.methods_passage("The recordings were made at night.")
+        said = self.code_availability()
+        self.assertIn("jpbernal/lantern", said)
+        self.assertNotIn("reproduces", said)
 
     def test_every_tag_main_does_not_hold_is_listed_beside_one_it_holds(self):
         both = self.methods_passage("The phase {code:code/phaselock.py#order_parameter} and the drift {code:code/drift.py#L9}.")

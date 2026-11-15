@@ -464,6 +464,12 @@ def no_code(project_or_ledger, passages=None, read=None):
     `code/` on `main` calls any routine the table gives that alias to. Listed, never failed: the rule from Methods to code
     is no gate.
     """
+    return _methods_to_code(project_or_ledger, passages, read)[1]
+
+
+def _methods_to_code(project_or_ledger, passages=None, read=None):
+    """`(named, missing)`: how many methods the current Methods passages name (each `code` tag, and each method of the
+    alias table a passage with no tag names), and `no_code`'s list of those with no code behind them."""
     from wayline import provenance  # the provenance module pulls in the gates and the report
 
     book = ledger_for(project_or_ledger)
@@ -477,10 +483,11 @@ def no_code(project_or_ledger, passages=None, read=None):
                 if alias:
                     held = calls_of.setdefault(alias.casefold(), (alias, entry.get("method") or call, set()))
                     held[2].add(call.split(".")[-1])
-    found, wanted = [], {}
+    found, wanted, named_count = [], {}, 0
     for item in passages:
         text = str(item.get("text") or "")
         tags = methods.code_tags([text])
+        named_count += len(tags)
         problems = [(path, locator) for path, locator in tags
                     if provenance.code_tag_problem(read, {"path": path, "locator": locator}) is not None]
         for path, locator in problems:
@@ -494,6 +501,7 @@ def no_code(project_or_ledger, passages=None, read=None):
                 named.setdefault(method, (alias, set()))[1].update(calls)
         for method, (alias, calls) in named.items():
             wanted.setdefault(item["id"], []).append((item, alias, method, calls))
+        named_count += len(named)
     every = {call for entries in wanted.values() for _, _, _, calls in entries for call in calls}
     called = _calls(book.project, every)
     for identifier, entries in wanted.items():
@@ -501,7 +509,7 @@ def no_code(project_or_ledger, passages=None, read=None):
             if not calls & called:
                 found.append({"passage": identifier, "heading": _one_line(item.get("heading")), "named": alias,
                               "why": "no code under `code/` calls %s (%s)" % (method, ", ".join(sorted(calls)))})
-    return found
+    return named_count, found
 
 
 def gap_lines(entries):
@@ -546,9 +554,10 @@ def _record(book, rows, listed, proposed, missing):
 
 
 def availability(project_or_ledger):
-    """The data and code availability statement's inputs on the code: each Methods method the code repository does not
-    reproduce (`not_reproduced`), as code reads them now."""
-    return [dict(entry, reproduced_by_repository=False) for entry in no_code(project_or_ledger)]
+    """The code availability statement's inputs on the code, as code reads them now: `{methods, not_reproduced}`, how
+    many methods the Methods names and each one the code repository does not reproduce."""
+    named, missing = _methods_to_code(project_or_ledger)
+    return {"methods": named, "not_reproduced": [dict(entry, reproduced_by_repository=False) for entry in missing]}
 
 
 # --- the setup at a start midway -------------------------------------------------------------------------------------

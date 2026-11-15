@@ -36,7 +36,7 @@ from wayline.ledger import JOB_FINISHED, JOB_LAUNCHED, TICKET_LAUNCHED, TICKET_R
 
 __all__ = [
     "OWNER_BEGIN", "OWNER_END", "REPRODUCE_MD", "REPRODUCE_JSON", "README", "LOCKS_DIR", "LOCK_FILES",
-    "runs_by_result", "render", "render_if_changed",
+    "runs_by_result", "read_paths", "render", "render_if_changed",
 ]
 
 CODE = "code"
@@ -104,15 +104,21 @@ def _public_command(text, project):
     return " ".join(_public_token(token, project) for token in text.split(" "))
 
 
-def _is_file(token, cwd, project):
+def _token_file(token, cwd, project):
+    """The file a command-line token names (`path`, or `--flag=path`), resolved, wherever it is; None when it names none."""
     _key, sep, value = token.partition("=")
     candidate = Path(value if sep and token.startswith("-") else token)
     if not candidate.is_absolute():
         candidate = Path(cwd or project) / candidate
     try:
-        return candidate.is_file() and candidate.resolve().is_relative_to(Path(project).resolve())
+        return candidate.resolve() if candidate.is_file() else None
     except OSError:
-        return False
+        return None
+
+
+def _is_file(token, cwd, project):
+    found = _token_file(token, cwd, project)
+    return found is not None and found.is_relative_to(Path(project).resolve())
 
 
 # --- the records ------------------------------------------------------------------------------------------------
@@ -157,6 +163,11 @@ def _outputs(project, manifest, run_id, job):
 
 def _session_commands(project, run_id):
     """The commands every session of the attempt ran: its first session's `result.json`, then each resume's."""
+    return [_public_command(line, project) for line in _session_lines(project, run_id)]
+
+
+def _session_lines(project, run_id):
+    """The commands every session of the attempt ran, as it ran them."""
     match = re.match(r"^t(\d+)-a(\d+)$", run_id or "")
     if not match:
         return []
@@ -171,7 +182,7 @@ def _session_commands(project, run_id):
         if not isinstance(returned, dict):
             continue
         output = returned.get("structured_output") if isinstance(returned.get("structured_output"), dict) else returned
-        commands += [_public_command(line, project) for line in output.get("commands_run") or [] if isinstance(line, str)]
+        commands += [line for line in output.get("commands_run") or [] if isinstance(line, str)]
     return commands
 
 
@@ -247,6 +258,34 @@ def runs_by_result(project):
             else:
                 result["runs"].append(_ticket_run(project, manifest, run_id, tickets.get(run_id), durations.get(run_id)))
     return [results[key] for key in sorted(results)]
+
+
+def read_paths(project):
+    """Every file the runs the current findings cite named on their command lines, resolved: what the work read
+    (ticket 139), a job's from its record's command and a session's from the commands it ran. Inside the project or not,
+    so data kept elsewhere counts; the files the runs wrote are not reads."""
+    project = Path(project)
+    ledger = Ledger(project)
+    manifest = provenance.read_manifest(ledger)
+    written = {(project / entry["path"]).resolve() for entry in manifest.get("entries", [])}
+    seen, read = set(), set()
+    for finding in provenance.current_findings(ledger):
+        for entry in _cited_entries(finding, manifest):
+            run = (entry.get("run_id"), entry.get("job"))
+            if run in seen:
+                continue
+            seen.add(run)
+            if entry.get("job"):
+                try:
+                    record = ledger.read_json("jobs/%s.json" % entry["job"])
+                except (OSError, ValueError):
+                    continue
+                lines, cwd = [[str(part) for part in record.get("command") or []][1:]], record.get("cwd")
+            else:
+                lines, cwd = [line.split() for line in _session_lines(project, entry.get("run_id"))], None
+            for tokens in lines:
+                read.update(found for found in (_token_file(token, cwd, project) for token in tokens) if found is not None)
+    return read - written
 
 
 # --- the locks --------------------------------------------------------------------------------------------------

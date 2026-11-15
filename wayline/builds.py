@@ -512,9 +512,18 @@ def _routes(project):
     return found
 
 
-def _table_label(plan):
+def inherited_id(plan):
+    """The id the inherited results' table holds: the one the composition numbered it by first citation
+    (`paper_figures.by_first_citation`), else the one after the plan's supplementary tables."""
+    if (plan or {}).get("inherited_table"):
+        return plan["inherited_table"]
     supplementary = [table for table in (plan or {}).get("tables") or [] if not table.get("main")]
-    return "Supplementary Table S%d" % (len(supplementary) + 1)
+    return "ST%d" % (len(supplementary) + 1)
+
+
+def _table_label(plan):
+    from wayline import paper_figures
+    return paper_figures.label(inherited_id(plan))
 
 
 def writer_lines(project, rebuild=None, build=1, plan=None):

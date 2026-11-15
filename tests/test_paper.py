@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest import mock
 
 from tests import machine
@@ -56,6 +57,27 @@ def answer_for(structure, parts, **override):
     if "results" not in parts:
         found["tables"] = []
     return found
+
+
+# A record's entries as Python prints them, `{'passage': 'P60', ...}`: what no composed part may carry (ticket 139).
+RECORD_TEXT = re.compile(r"\{\s*'[^'\n]*'\s*:|'[A-Za-z_]\w*':\s|\b(?:True|False|None)\}")
+
+
+def assert_no_record_text(case, project):
+    """Every composed part under `research/paper/` is prose: no part carries a record's dict text."""
+    for part in paper.PARTS:
+        path = Path(project) / "research" / "paper" / ("%s.md" % part)
+        if path.is_file():
+            case.assertNotRegex(path.read_text(encoding="utf-8"), RECORD_TEXT, "%s.md carries a record's dict text" % part)
+
+
+def repository_settled(project, name="jpbernal/lantern"):
+    """Setup's answer on the code repository, as `harness.json` keeps it: a private remote on GitHub."""
+    path = Path(project) / "harness.json"
+    harness = json.loads(path.read_text(encoding="utf-8"))
+    harness["code_repository"] = {"shape": "package", "visibility": "private", "license": "MIT",
+                                  "remote": {"repository": name, "url": "https://github.com/%s" % name, "how": "new"}}
+    path.write_text(json.dumps(harness, indent=2) + "\n", encoding="utf-8")
 
 
 def close_as_passed(project, payload):
@@ -335,6 +357,7 @@ class ComposeTest(PaperCase):
                       "[TO BE GIVEN: competing interests]", "## Data availability", "1 artifact(s) recorded with their SHA-256",
                       "## Code availability", "[TO BE GIVEN: the code repository, which setup has not settled]"):
             self.assertIn(words, front)
+        assert_no_record_text(self, self.project)
         [call] = self.calls
         self.assertIn("The front matter", call.request.prompt)
         self.assertNotIn("front", asked(call.request.prompt))
@@ -361,18 +384,35 @@ class FrontMatterTest(PaperCase):
         return front.split("## %s\n\n" % heading, 1)[1].split("\n## ", 1)[0]
 
     def test_code_availability_says_in_prose_what_the_repository_does_not_reproduce_and_why(self):
+        repository_settled(self.project)
         filtered = self.passage("methods", "Filtering", "Each trace was band-passed with a Butterworth filter.")["id"]
         drift = self.passage("methods", "Drift", "The drift is fitted by least squares {code:code/drift.py#fit_drift}.")["id"]
         self.compose()
         said = self.availability("Code availability")
-        self.assertNotRegex(said, r"[{}]|'\w+':", "the code-to-Methods record never reaches the paper as it is kept")
+        self.assertNotIn("{", said, "the code-to-Methods record never reaches the paper as it is kept, nor a tag")
+        assert_no_record_text(self, self.project)
         self.assertIn("The code repository reproduces every method the Methods names except ", said)
         self.assertIn('Butterworth, named in "Filtering" (%s), since no code under `code/` calls Butterworth filter (butter)'
                       % filtered, said)
         self.assertIn('the code at `code/drift.py` (`fit_drift`), named in "Drift" (%s), since `main` holds no such code' % drift, said)
         self.assertIn('least squares, named in "Fitting" (%s)' % self.owners, said)
 
-    def test_data_availability_names_only_the_data_never_a_references_e_print_source(self):
+    def test_with_no_code_repository_settled_code_availability_claims_nothing_is_reproduced(self):
+        self.compose()
+        said = self.availability("Code availability")
+        self.assertEqual(said.strip(), "[TO BE GIVEN: the code repository, which setup has not settled]")
+
+    def test_a_check_that_could_not_run_leaves_a_placeholder_never_the_claim(self):
+        from wayline import methods_inventory
+        repository_settled(self.project)
+        with mock.patch.object(methods_inventory, "availability", side_effect=OSError("the code could not be read")):
+            self.compose()
+        said = self.availability("Code availability")
+        self.assertIn("[TO BE GIVEN: what the code repository reproduces: code could not read the Methods against the code "
+                      "(the code could not be read)]", said)
+        self.assertNotIn("reproduces every method", said)
+
+    def test_data_availability_names_no_data_the_work_did_not_read_and_never_a_references_e_print_source(self):
         from tests.test_intake import TOY_SOURCE
         kept = self.project / "research" / "intake"
         kept.mkdir(parents=True, exist_ok=True)
@@ -381,13 +421,14 @@ class FrontMatterTest(PaperCase):
         intake_md = self.project / "research" / "INTAKE.md"
         text = intake_md.read_text(encoding="utf-8") if intake_md.is_file() else "# Intake\n\n## Data\n\nNot stated.\n"
         listed = ("- `research/intake/paper-c-source.tar.gz` (a file, 1.1 KB)\n"
-                  "- `research/intake/counts.csv` (a file, 12 bytes)\n")
+                  "- `research/intake/counts.csv` (a file, 12 bytes)\n- GEO accession GSE1\n")
         text = re.sub(r"(?ms)^## Data\s*$.*?(?=^## |\Z)", lambda match: "## Data\n\n%s\n" % listed, text)
         self.ledger.write_markdown("INTAKE.md", text)
         self.compose()
         said = self.availability("Data availability")
-        self.assertIn("The data this study analysed: `research/intake/counts.csv` (a file, 12 bytes).", said)
-        self.assertNotIn("paper-c-source", said, "an e-print source is a reference's, never the data the study read")
+        self.assertTrue(said.startswith("[TO BE GIVEN: the data this study analysed]"), "no cited run read any of it")
+        for named in ("paper-c-source", "counts.csv", "GSE1"):
+            self.assertNotIn(named, said)
 
     def test_front_matter_outside_its_schema_is_refused(self):
         code, _, err = self.verb("front", "-", stdin=json.dumps({"authors": [{"name": ""}]}))

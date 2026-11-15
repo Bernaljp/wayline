@@ -42,15 +42,24 @@ lists it read-only, marked with its tag.
   `showcase` workflow builds it on every pull request and opens every view in Chrome, keeping screenshots, and
   publishes it on every push to master, so it shows the interface master has; `tests/test_showcase.py` fails on a
   GET route `COVERAGE` does not account for, and `tests/test_showcase_browser.py` on a request no recording answers.
-- The paper's front matter and supplement as composed (ticket 139; Implementation Decision 17). Code availability says
-  in a sentence what the code repository reproduces and each Methods method it does not, where the Methods names it
-  and why, where it had printed the code-to-Methods record's entries as Python dict literals. Each table of the figure
-  plan gets its own number: two tables of one result had shared one (both `ST3` in the M8 toy's paper, one file pair
-  written and the inherited results' table numbered past a gap), and now number in outline order, `T1`, `T2`, then
-  `ST1`, `ST2`, each with its own `.md` and `.csv`. Intake files an e-print source tarball (a tarball holding a
-  LaTeX document) under the references, never the data: by the arXiv id in arXiv's name for it, else by its LaTeX
-  title, else as `Source: <path>`, a file absorb never asks a service about; given as a material, a `--data`
-  pointer, a `--reference`, or a dashboard drop alike. Data availability leaves out any Data line naming one.
+- The paper's front matter and supplement as composed (ticket 139; Implementation Decision 17).
+  - Code availability says in a sentence what the code repository reproduces and each Methods method it does not,
+    where the Methods names it and why, where it had printed the code-to-Methods record's entries as Python dict
+    literals. It claims nothing before setup settles a code repository or while the Methods names no method, and a
+    check that could not run leaves a marked placeholder instead of the claim.
+  - Supplementary figures and tables are numbered once each, in order of first citation through the parts as
+    composed (an item no part cites after the cited ones, in the plan's order), each with its own `.md` and `.csv`;
+    the writer's citations are renumbered with them, and a part kept from the last version is read by that version's
+    numbers. Two tables of one result had shared one number (both `ST3` in the M8 toy's paper, one file pair written
+    and the inherited results' table numbered past a gap).
+  - Intake files an e-print (a paper's LaTeX source as arXiv serves it: a tarball, or a single gzipped `.tex`) under
+    the references, never the data: by the arXiv id in arXiv's name for it, else by its LaTeX title, else as
+    `E-print: <path>`, a file absorb never asks a service about; given as a material, a `--data` pointer, a
+    `--reference`, or a dashboard drop alike. Only a file's first 64 MiB are looked into, so a tarball whose LaTeX
+    document lies past them is data.
+  - Data availability is written only from what the work read: an `INTAKE.md` Data line is named when a run the
+    current findings cite named its file (or a file under its directory) on its command line
+    (`reproduce.read_paths`); a pointer in words, data no cited run read, and an e-print never are.
 - The ticket graph draws a ticket blocked by two tickets one of which blocks the other (`dag._layers`). The layering
   pushed every pending parent at once and took a parent still waiting for its sibling's sake for a cycle, so the
   dashboard's graph of the M8 toy run (ticket 96 blocked by 115 and 116, and 116 by 115) answered 500, "the edges form

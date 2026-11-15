@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
-from tests.test_paper import PaperCase, Writer, asked, close_as_passed
+from tests.test_paper import PaperCase, Writer, assert_no_record_text, asked, close_as_passed
 from wayline import batches, figure_checks, figure_role, paper, paper_figures, worker
 from wayline.worker import Envelope
 
@@ -425,14 +425,14 @@ class ComposeFiguresTest(PlannedFigureCase):
         super().setUp()
         self.drawn("R1", [(1, "keep"), (2, "keep"), (3, None)], tables=[(1, "keep")])
 
-    def compose_with_figures(self, figures=2, verdicts=None):
+    def compose_with_figures(self, figures=2, verdicts=None, change=renumbered):
         payload = paper.open_order(self.project)
         if payload is None:
             paper.order(self.project, start=None)
             payload = paper.open_order(self.project)
         if payload.get("batch"):
             batches.take_defaults(self.project, payload["batch"])
-        writer = Writer(self.project, renumbered)
+        writer = Writer(self.project, change)
         with worker.use_fake() as fake, mock.patch.object(figure_checks, "run_checks", passing_checks):
             fake.script(respond=writer, role="writer")
             for _ in range(figures):
@@ -474,6 +474,29 @@ class ComposeFiguresTest(PlannedFigureCase):
         from wayline import builds
         self.assertEqual(builds._table_label(paper_figures.build(self.project)), "Supplementary Table S3",
                          "the inherited results' table comes next, with no number skipped")
+
+    def test_supplementary_items_are_numbered_by_first_citation_in_the_composed_text(self):
+        self.drawn("R1", [(1, "keep"), (2, "keep"), (3, None)], tables=[(1, "keep"), (2, None), (3, None), (4, None)])
+
+        def cites(found, calls):
+            found = renumbered(found, calls)
+            if found.get("results"):
+                found["results"] += ("\n\nThe spread is in Supplementary Table S3 and Fig. S1; the errors by noise are in "
+                                     "Table S2, and again in Supplementary Table S3.")
+            return found
+        record = self.compose_with_figures(change=cites)
+        self.assertEqual([(entry["id"], entry["plot"]) for entry in record["figures"]["tables"] if not entry["main"]],
+                         [("ST1", "R1.T4"), ("ST2", "R1.T3"), ("ST3", "R1.T2")], "cited first, then the uncited in the plan's order")
+        self.assertIn("**Supplementary Table S1.** the errors 4", self.read("tables/ST1.md"))
+        self.assertIn("**Supplementary Table S3.** the errors 2", self.read("tables/ST3.md"))
+        self.assertIn("Supplementary Table S1 and Fig. S1; the errors by noise are in Table S2, and again in "
+                      "Supplementary Table S1.", self.read("results.md"))
+        self.assertEqual([entry["id"] for entry in record["figures"]["figures"]], ["F1", "S1"])
+        assert_no_record_text(self, self.project)
+        # A re-order that keeps the results reads them by this version's numbers, so nothing moves.
+        again = self.compose_with_figures(figures=0, verdicts=[], change=renumbered)
+        self.assertEqual([(entry["id"], entry["plot"]) for entry in again["figures"]["tables"] if not entry["main"]],
+                         [("ST1", "R1.T4"), ("ST2", "R1.T3"), ("ST3", "R1.T2")])
 
     def test_a_chosen_table_is_a_numbered_table_rendered_from_its_csv(self):
         self.compose_with_figures()

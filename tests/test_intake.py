@@ -6,12 +6,15 @@ reference reader, which is what `absorb` uses), `harness.json`, and the journal.
 intake's: `wayline objective add` records it as an objective with a measure (ticket 76).
 """
 
+import gzip
+import hashlib
 import importlib.util
 import io
 import json
 import re
 import shutil
 import subprocess
+import tarfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -379,8 +382,7 @@ class DashboardDropTest(IntakeTestCase):
 
 
 def tarball(path, files):
-    """A gzipped tarball of `files` (`{name: text}`), as an owner might hand one over."""
-    import tarfile
+    """A gzipped tarball of `files` (`{name: text}`, in order), as an owner might hand one over."""
     with tarfile.open(path, "w:gz") as archive:
         for name, text in files.items():
             data = text.encode("utf-8")
@@ -407,8 +409,8 @@ class EprintSourceTest(IntakeTestCase):
         self.assertEqual(report["taken"], ["References"])
         self.assertEqual(self.section("Data"), "Not stated.")
         self.assertEqual(self.section("References"),
-                         "- %s\n  - The e-print source `research/intake/paper-c-source.tar.gz`: another work's source, "
-                         "so a reference and never data the study reads." % TOY_TITLE)
+                         "- %s\n  - The e-print `research/intake/paper-c-source.tar.gz`, another work's LaTeX source: "
+                         "a reference, never data the study reads." % TOY_TITLE)
         [reference] = read_intake(self.project)
         self.assertEqual(reference.value, TOY_TITLE, "absorb looks the work up by its title, never by the path")
         self.assertIn("paper-c-source.tar.gz", reference.note)
@@ -417,14 +419,14 @@ class EprintSourceTest(IntakeTestCase):
         source = tarball(self.owner / "arXiv-2401.00001v2.tar.gz", {"ms.tex": "\\documentclass{article}\n\\begin{document}x\\end{document}\n"})
         code, _, err = run("--intent", "Again.", str(source), "--project", str(self.project))
         self.assertEqual(code, 0, err)
-        self.assertTrue(self.section("References").startswith("- arXiv:2401.00001v2\n  - The e-print source `%s`" % source))
+        self.assertTrue(self.section("References").startswith("- arXiv:2401.00001v2\n  - The e-print `%s`" % source))
         self.assertEqual(self.section("Data"), "Not stated.")
 
     def test_an_e_print_source_with_no_title_or_identifier_is_a_file_reference_nothing_is_asked_about(self):
         source = tarball(self.owner / "draft-source.tgz", {"main.tex": "\\documentclass{article}\n\\begin{document}x\\end{document}\n"})
         code, _, err = run("--intent", "Again.", str(source), "--project", str(self.project))
         self.assertEqual(code, 0, err)
-        self.assertTrue(self.section("References").startswith("- Source: `%s`" % source))
+        self.assertTrue(self.section("References").startswith("- E-print: `%s`" % source))
         self.assertEqual([(reference.kind, reference.value) for reference in read_intake(self.project)], [("file", str(source))])
 
     def test_an_e_print_source_given_as_data_or_as_a_reference_is_still_a_reference(self):
@@ -435,6 +437,32 @@ class EprintSourceTest(IntakeTestCase):
         code, _, err = run("--intent", "Again.", "--reference", str(TOY_SOURCE), "--project", str(self.project))
         self.assertEqual(code, 0, err)
         self.assertTrue(self.section("References").startswith("- %s" % TOY_TITLE))
+
+    def test_a_single_gzipped_tex_as_arxiv_serves_an_old_submission_is_an_e_print(self):
+        source = self.owner / "2401.00003.gz"
+        source.write_bytes(gzip.compress(b"\\documentclass{article}\n\\title{One file}\n\\begin{document}x\\end{document}\n"))
+        code, _, err = run("--intent", "Again.", str(source), "--project", str(self.project))
+        self.assertEqual(code, 0, err)
+        self.assertTrue(self.section("References").startswith("- arXiv:2401.00003\n"))
+        self.assertEqual(self.section("Data"), "Not stated.")
+        other = self.owner / "readings.csv.gz"
+        other.write_bytes(gzip.compress(b"t,v\n0,1\n"))
+        code, _, err = run("--intent", "Again.", str(other), "--project", str(self.project))
+        self.assertEqual(code, 0, err)
+        self.assertIn("readings.csv.gz", self.section("Data"), "a gzipped file that is no LaTeX document is data")
+
+    def test_a_tarball_is_looked_into_only_as_far_as_the_bound(self):
+        document = "\\documentclass{article}\n\\title{Past the bound}\n\\begin{document}x\\end{document}\n"
+        noise = "".join(hashlib.sha256(str(number).encode()).hexdigest() for number in range(400))  # gzip cannot shrink it
+        late = tarball(self.owner / "late.tar.gz", {"data.txt": noise, "ms.tex": document})
+        early = tarball(self.owner / "early.tar.gz", {"ms.tex": document, "data.txt": noise})
+        with mock.patch.object(intake, "EPRINT_MAX_BYTES", 1024):
+            self.assertIsNone(intake.eprint_source(late), "its document lies past the bound: taken for data")
+            self.assertEqual(intake.eprint_source(early), intake.Eprint("Past the bound"))
+            code, _, err = run("--intent", "Again.", str(late), str(early), "--project", str(self.project))
+        self.assertEqual(code, 0, err)
+        self.assertIn("late.tar.gz", self.section("Data"))
+        self.assertTrue(self.section("References").startswith("- Past the bound\n"))
 
     def test_a_tarball_of_data_stays_under_the_data(self):
         report = drop_material(self.project, "counts.tar.gz", tarball(self.owner / "counts.tar.gz", {"counts.csv": "gene,n\nA,1\n"}).read_bytes())

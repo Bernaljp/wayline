@@ -112,8 +112,12 @@ _HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
 _REFERENCES_HEADING = re.compile(r"^references?\b", re.IGNORECASE)
 _LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
 _TOP_ITEM = re.compile(r"^ ?(?:[-*+]|\d+[.)])\s+\S")  # a list item at the margin; anything indented further is nested
+# The heads `INTAKE.md` gives a reference that is a file, which intake writes and `intake_references` reads: a PDF's (its
+# source, or the reference itself when nothing names it), and an e-print's no title or identifier names (ticket 139).
+PDF_HEAD = "PDF: `%s`"
+EPRINT_HEAD = "E-print: `%s`"
 _PDF_ITEM = re.compile(r"^PDF:\s*`([^`]+)`\s*$")
-_SOURCE_ITEM = re.compile(r"^Source:\s*`([^`]+)`\s*$")  # an e-print source with no title or identifier (ticket 139)
+_EPRINT_ITEM = re.compile(r"^E-print:\s*`([^`]+)`\s*$")
 _LIST_MARKER = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 _EMPTY_ANSWER = frozenset(["none", "n/a", "na", "nothing", "tbd", "todo", "-", "none."])
 _ALNUM = re.compile(r"[a-z0-9]", re.IGNORECASE)
@@ -425,11 +429,11 @@ def _intake_reference(line, nested):
             pdf = source.group(1)
         else:
             notes.append(text)
-    alone = _PDF_ITEM.match(_LIST_MARKER.sub("", line).strip())
-    bare = _LIST_MARKER.sub("", line).strip().strip("`").strip()
-    source = _SOURCE_ITEM.match(_LIST_MARKER.sub("", line).strip())
-    if source is not None:
-        return Reference("file", source.group(1), line, note=" ".join(notes) or None, pdf=pdf)  # never a title query
+    item = _LIST_MARKER.sub("", line).strip()
+    alone, eprint = _PDF_ITEM.match(item), _EPRINT_ITEM.match(item)
+    bare = item.strip("`").strip()
+    if eprint is not None:
+        return Reference("file", eprint.group(1), line, note=" ".join(notes) or None, pdf=pdf)  # never a title query
     if alone is not None or (bare.lower().endswith(".pdf") and " " not in bare and "://" not in bare):
         path = alone.group(1) if alone is not None else bare
         return Reference("file", path, line, note=" ".join(notes) or None, pdf=path)  # a path is never a title query
