@@ -15,6 +15,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+from tests.launch_line import assert_no_owner_mcp_or_plugin, owner_with_a_plugin
 from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase
 from tests.test_conductor import ConductorCase, done, patch, combined, drive
@@ -339,12 +340,10 @@ class VerdictGateTest(GateCase):
         settings = json.loads(Path(request.settings_path).read_text(encoding="utf-8"))
         self.assertIn("PreToolUse", settings["hooks"])
 
-    def test_the_launch_line_starts_no_mcp_server_of_the_owners(self):
-        """Ticket 130: only the servers of an empty `--mcp-config`, so none of the owner's user or plugin servers."""
+    def test_the_launch_line_starts_no_mcp_server_or_plugin_of_the_owners(self):
+        owner_with_a_plugin(self)
         self.take(passing())
-        argv = worker.build_argv(self.calls[0].request, self.calls[0].run_dir)
-        self.assertIn("--strict-mcp-config", argv)
-        self.assertEqual(json.loads(argv[argv.index("--mcp-config") + 1]), {"mcpServers": {}})
+        assert_no_owner_mcp_or_plugin(self, self.calls[0].argv)
 
     def test_the_session_runs_in_the_project_and_writes_under_verdicts(self):
         self.take(passing())

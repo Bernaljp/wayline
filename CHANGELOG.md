@@ -33,13 +33,17 @@ refuses a project made before it, which keeps its old tag or starts again on the
 project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
 lists it read-only, marked with its tag.
 
-- Harness sessions start none of the owner's MCP servers (ticket 130; Implementation Decisions 4 and 7). Every
-  launch line (`worker.build_argv`: a ticket's worker, a verdict, the decider, the chat, every other role, and each
-  resume) and the tick's `/usage` reading pass `--strict-mcp-config --mcp-config '{"mcpServers": {}}'`
-  (`worker.NO_MCP_ARGV`). On the M8 toy run every session had started the owner's user-level and plugin servers
-  (`codex mcp-server`, `llm-chat`, `npx @playwright/mcp@latest`), which `--disallowedTools mcp__*` refuses the tools
-  of but does not stop starting. Checked live on Claude Code 2.1.325 and recorded in `docs/verification/m8.md`:
-  a launch through the launcher starts no MCP server process and its `system/init` lists none.
+- Harness sessions start none of the owner's MCP servers or plugins (ticket 130; Implementation Decisions 3, and 5
+  for the `/usage` reading). Every launch line (`worker.build_argv`: a ticket's worker, a verdict, the decider, the
+  chat, every other role, and each resume) and the tick's `/usage` reading pass `--strict-mcp-config --mcp-config
+  '{"mcpServers": {}}'` (`worker.NO_MCP_ARGV`). Every session's `settings.json` (the file `--settings` names) also
+  sets `enabledPlugins` false for each plugin the owner's user settings name (`worker.without_owner_plugins`).
+  Nothing else of the user settings changes. On the M8 toy run every session had started the owner's user-level and
+  plugin servers (`codex mcp-server`, `llm-chat`, `npm exec @playwright/mcp@latest`), which `--disallowedTools
+  mcp__*` refuses the tools of but does not stop starting, and had loaded the owner's plugins. Checked live on
+  Claude Code 2.1.325 and recorded in `docs/verification/m8.md`: a launch through the launcher starts no MCP server
+  process, and its `system/init` lists no MCP server and only Claude Code's built-in plugins. The suite runs with an
+  empty `CLAUDE_CONFIG_DIR`, so it never reads the owner's settings.
 - The public showcase (`showcase/`): the dashboard over the M8 toy run as a static site on GitHub Pages, and the
   repository under the MIT license (`LICENSE`), with a `README.md` for a reader new to wayline. `python3 -m
   showcase.build <out>` serves a snapshot of the run (`showcase/toy.tar.xz`: what the views read, the paper, the plots

@@ -18,6 +18,10 @@ and nvidia-smi. The suite runs without the subscription, the network, or a GPU (
 test that would have reached one fails instead. The tests of the real launcher pass their own
 environment without it, with a fake executable standing in for `claude`.
 
+`CLAUDE_CONFIG_DIR` names an empty directory, so the launcher reads none of the owner's user settings and a
+session's `settings.json` turns off no plugin of the owner's (ticket 130). The tests of that pass their own
+config home (`tests.launch_line.owner_with_a_plugin`).
+
 `python -m unittest` runs the whole suite in parallel (ticket 47: under a minute): `load_tests`
 below forks one child per test class, `WAYLINE_TEST_JOBS` at a time (default the CPU count, at
 most 32), and replays each child's outcomes into the runner's result, so the summary, the failure
@@ -25,8 +29,10 @@ blocks, `--durations`, and the exit code read as a serial run's do. `WAYLINE_TES
 serially; naming a module or a test (`python -m unittest tests.test_changes`) never forks.
 """
 
+import atexit
 import os
 import pickle
+import shutil
 import sys
 import tempfile
 import traceback
@@ -36,6 +42,8 @@ os.environ["WAYLINE_UNITS"] = "none"
 os.environ["WAYLINE_UNPINNED"] = "1"
 os.environ["WAYLINE_NOTIFY"] = "none"
 os.environ["WAYLINE_BACKENDS"] = "none"
+os.environ["CLAUDE_CONFIG_DIR"] = tempfile.mkdtemp(prefix="wayline-tests-claude-home-")  # left empty; see above
+atexit.register(shutil.rmtree, os.environ["CLAUDE_CONFIG_DIR"], True)  # a forked child leaves by os._exit, past this
 
 JOBS_ENV = "WAYLINE_TEST_JOBS"
 
