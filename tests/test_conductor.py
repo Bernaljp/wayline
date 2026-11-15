@@ -18,6 +18,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from tests.launch_line import assert_no_owner_mcp_or_plugin, owner_with_a_plugin
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests import machine
 from tests.projects import SEVEN_RUNG_LADDER, ProjectTestCase, fable_policy, open_objective
@@ -259,6 +260,7 @@ class LaunchTest(ConductorCase):
 
     def setUp(self):
         super().setUp()
+        owner_with_a_plugin(self)
         self.conduct((done(), patch()))
         self.call = self.calls[0]
 
@@ -292,6 +294,9 @@ class LaunchTest(ConductorCase):
         commands = [handler["command"] for matchers in settings["hooks"].values() for matcher in matchers for handler in matcher["hooks"]]
         self.assertEqual(sorted(Path(command).name for command in commands), ["command_guard.sh", "stop_guard.sh", "touch_set_guard.sh"])
         self.assertTrue(all(command.startswith(str(HARNESS_ROOT)) for command in commands))
+
+    def test_the_launch_line_starts_no_mcp_server_or_plugin_of_the_owners(self):
+        assert_no_owner_mcp_or_plugin(self, self.call.argv)  # the owner's plugin is set up before the wave, in setUp
 
     def test_both_directories_of_the_launch_line_are_added(self):
         self.assertEqual(self.call.request.add_dirs, [str(HARNESS_ROOT), str(self.project)])

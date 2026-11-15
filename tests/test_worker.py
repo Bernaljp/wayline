@@ -22,6 +22,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests.launch_line import OWNER_PLUGIN, assert_no_owner_mcp_or_plugin, owner_with_a_plugin
 from tests.paths import HARNESS_ROOT, SPEC_PATH
 from tests.spec_table import spec_seam_fields
 from tests.test_cli import run_cli
@@ -190,6 +191,7 @@ class ArgvTest(unittest.TestCase):
             "--permission-mode", "dontAsk", "--permission-prompts", "none",
             "--allowedTools", "Read", "Bash(git status*)",
             "--disallowedTools", "WebFetch", "WebSearch",
+            "--strict-mcp-config", "--mcp-config", '{"mcpServers": {}}',
             "--settings", "/proj/research/sessions/3/1/settings.json",
             "--add-dir", "/harness", "--add-dir", "/project",
             "--output-format", "stream-json", "--verbose",
@@ -279,7 +281,8 @@ class ArgvTest(unittest.TestCase):
         expected_tail = [arg if arg != "/proj/research/sessions/3/1/settings.json" else "/proj/research/sessions/3/1/resume-1/settings.json" for arg in launch[3:]]
         self.assertEqual(resume[5:], expected_tail)
         for flag in ["--agents", "--settings", "--permission-mode", "--permission-prompts", "--allowedTools",
-                     "--disallowedTools", "--add-dir", "--fallback-model", "--output-format", "--json-schema"]:
+                     "--disallowedTools", "--strict-mcp-config", "--mcp-config", "--add-dir", "--fallback-model",
+                     "--output-format", "--json-schema"]:
             self.assertIn(flag, resume)
         with self.assertRaises(worker.LaunchError):
             worker.build_argv(request, run, session_id="83508b6e", message="  ")
@@ -572,6 +575,26 @@ class ClaudeCliTest(StandInMixin, unittest.TestCase):
         self.assertEqual(envelope.stream_path, self.run / "stream.jsonl")
         self.assertEqual(envelope.session_id, "83508b6e-7d57-40cc-9243-83174fde6613")
         self.assertEqual(envelope.last_windows(), (0.15, 0.21))
+
+    def test_the_session_starts_no_mcp_server_or_plugin_of_the_owners(self):
+        owner_with_a_plugin(self)
+        worker.launch(self.request())
+        assert_no_owner_mcp_or_plugin(self, self.recorded()["argv"])
+
+    def test_the_owners_plugins_are_turned_off_beside_the_settings_the_request_gives(self):
+        owner_with_a_plugin(self)
+        given = self.root / "given-settings.json"
+        given.write_text(json.dumps({"hooks": {"Stop": []}, "enabledPlugins": {"harness-own@harness": True}}), encoding="utf-8")
+        worker.launch(self.request(settings_path=str(given)))
+        self.assertEqual(json.loads((self.run / "settings.json").read_text(encoding="utf-8")),
+                         {"hooks": {"Stop": []}, "enabledPlugins": {OWNER_PLUGIN: False, "harness-own@harness": True}})
+
+    def test_settings_that_are_not_a_json_object_are_refused_before_the_session(self):
+        given = self.root / "given-settings.json"
+        given.write_text("hooks: none\n", encoding="utf-8")
+        with self.assertRaises(worker.LaunchError):
+            worker.launch(self.request(settings_path=str(given)))
+        self.assertFalse(self.record.exists())
 
     def test_a_prompt_too_long_for_one_argument_goes_on_stdin(self):
         # Linux refuses one argument over 128 KiB (E2BIG), as a live specify redraft of 144 KB was refused (ticket 36).

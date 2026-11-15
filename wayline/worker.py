@@ -75,7 +75,15 @@ TERM_GRACE_SECONDS = 15  # after SIGTERM on a timeout, before SIGKILL
 # which `claude -p` reads when no prompt argument is given (ticket 36: a specify redraft of 144 KB was refused).
 # So does a prompt that begins with `-`, which the CLI would parse as an option (the M5 run's dedup judge).
 PROMPT_ARG_MAX = 100_000
-USAGE_ARGV = ("-p", "/usage", "--output-format", "json", "--no-session-persistence")  # decision 5; research-notes/02 launch 4
+# No MCP server and no plugin of the owner's (ticket 130; decision 3, the launch line). Without these flags the CLI
+# starts every user-level and plugin MCP server at each launch, which `--disallowedTools mcp__*` refuses the tools of
+# but does not stop starting: on the M8 toy run every session spawned `codex mcp-server`, the `llm-chat` server, and
+# `npm exec @playwright/mcp@latest`. `--strict-mcp-config` reads MCP servers only from `--mcp-config`, and the config
+# given names none. The owner's plugins are turned off in the session's own settings (`without_owner_plugins`)
+# (docs/verification/m8.md, "Harness sessions without the owner's MCP servers").
+NO_MCP_ARGV = ("--strict-mcp-config", "--mcp-config", '{"mcpServers": {}}')
+# decision 5; research-notes/02 launch 4. The MCP flags too: `/usage` starts the owner's servers as a session does.
+USAGE_ARGV = ("-p", "/usage", "--output-format", "json", "--no-session-persistence", *NO_MCP_ARGV)
 USAGE_TIMEOUT_S = 60
 AUTH_STATUS_ARGV = ("auth", "status", "--json")  # decision 7, the tick's login check; research-notes/02: exit 0 when logged in
 AUTH_STATUS_TIMEOUT_S = 30
@@ -1203,6 +1211,36 @@ def _check_paths(request):
     return cwd
 
 
+def owner_plugins():
+    """The plugins the owner's user settings name: the keys of `enabledPlugins` in `<config home>/settings.json`.
+
+    The config home is `CLAUDE_CONFIG_DIR` when it is set, else `~/.claude`, as the CLI reads it. No file, or
+    none that parses, names none.
+    """
+    home = os.environ.get("CLAUDE_CONFIG_DIR")
+    path = (Path(home).expanduser() if home else Path.home() / ".claude") / "settings.json"
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    named = settings.get("enabledPlugins") if isinstance(settings, dict) else None
+    return sorted(str(name) for name in named) if isinstance(named, dict) else []
+
+
+def without_owner_plugins(settings):
+    """`settings` with every plugin of the owner's turned off, for a session's `--settings` (ticket 130).
+
+    The flag settings outrank the user's, so `enabledPlugins` false here keeps the owner's plugins, their skills,
+    hooks, agents, and MCP servers, out of the session, and changes nothing else the user settings hold (auth
+    included). A plugin the given settings name keeps its own value. Settings with no owner plugin come back as given.
+    """
+    owner = owner_plugins()
+    if not owner:
+        return dict(settings)
+    given = settings.get("enabledPlugins") if isinstance(settings.get("enabledPlugins"), dict) else {}
+    return dict(settings, enabledPlugins=dict({name: False for name in owner}, **given))
+
+
 def _write_session(run_dir, request, prompt_text, executable, command, session_id, stdin="/dev/null"):
     """Write the request beside where the stream will go: prompt, agent, settings, schema, env.
 
@@ -1218,10 +1256,15 @@ def _write_session(run_dir, request, prompt_text, executable, command, session_i
     _write_text(run_dir / "prompt.md", prompt_text if prompt_text.endswith("\n") else prompt_text + "\n")
     agents = request.agent_json if isinstance(request.agent_json, dict) else json.loads(request.agent_json)
     _write_text(run_dir / "agent.json", json.dumps(agents, indent=2) + "\n")
-    if request.settings_path is None:
-        _write_text(run_dir / "settings.json", "{}\n")
-    elif Path(request.settings_path).resolve() != (run_dir / "settings.json").resolve():
-        _write_text(run_dir / "settings.json", Path(request.settings_path).read_text(encoding="utf-8"))
+    settings = {}
+    if request.settings_path is not None:
+        try:
+            settings = json.loads(Path(request.settings_path).read_text(encoding="utf-8"))
+        except ValueError as failure:
+            raise LaunchError("request.settings_path %s is not JSON: %s" % (request.settings_path, failure))
+        if not isinstance(settings, dict):
+            raise LaunchError("request.settings_path %s holds no JSON object" % request.settings_path)
+    _write_text(run_dir / "settings.json", json.dumps(without_owner_plugins(settings), indent=2) + "\n")
     if request.schema_path is not None and Path(request.schema_path).resolve() != (run_dir / "schema.json").resolve():
         _write_text(run_dir / "schema.json", _load_schema(request.schema_path)[0])
     record = {
@@ -1260,6 +1303,7 @@ def build_argv(request, run_dir, session_id=None, message=None):
         argv += ["--allowedTools", *[str(tool) for tool in request.allowed_tools]]
     if request.disallowed_tools:
         argv += ["--disallowedTools", *[str(tool) for tool in request.disallowed_tools]]
+    argv += list(NO_MCP_ARGV)
     argv += ["--settings", str(run_dir / "settings.json")]
     for directory in request.add_dirs:
         argv += ["--add-dir", str(directory)]
@@ -1760,6 +1804,7 @@ class Call:
     message: Optional[str]
     run_dir: Path
     pid: int
+    argv: list = field(default_factory=list)  # the launch line the call was given, `build_argv`'s, unspelled
 
 
 @dataclass
@@ -1986,7 +2031,7 @@ class FakeLauncher:
         ticket = request.env.get("WAYLINE_TICKET")
         hold = _Hold(None if ticket is None else str(ticket))
         with self._lock:
-            self.calls.append(Call(kind, request, session_id, message, run_dir, pid))
+            self.calls.append(Call(kind, request, session_id, message, run_dir, pid, argv))
             self._holds[pid] = hold
             self.peak = max(self.peak, len(self._holds))
         try:

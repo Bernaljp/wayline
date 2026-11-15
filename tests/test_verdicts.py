@@ -15,6 +15,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+from tests.launch_line import assert_no_owner_mcp_or_plugin, owner_with_a_plugin
 from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase
 from tests.test_conductor import ConductorCase, done, patch, combined, drive
@@ -338,6 +339,11 @@ class VerdictGateTest(GateCase):
         self.assertEqual(Path(request.schema_path).name, "verdict.json")
         settings = json.loads(Path(request.settings_path).read_text(encoding="utf-8"))
         self.assertIn("PreToolUse", settings["hooks"])
+
+    def test_the_launch_line_starts_no_mcp_server_or_plugin_of_the_owners(self):
+        owner_with_a_plugin(self)
+        self.take(passing())
+        assert_no_owner_mcp_or_plugin(self, self.calls[0].argv)
 
     def test_the_session_runs_in_the_project_and_writes_under_verdicts(self):
         self.take(passing())

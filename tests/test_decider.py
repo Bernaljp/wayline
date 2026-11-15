@@ -17,6 +17,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
+from tests.launch_line import assert_no_owner_mcp_or_plugin, owner_with_a_plugin
 from tests.paths import FIXTURES_DIR, HARNESS_ROOT
 from tests.projects import ProjectTestCase, fable_policy, on_fable, open_objective
 from tests.test_conductor import drive
@@ -353,6 +354,14 @@ class DecideRestTest(RecordedGrillCase):
         self.assertEqual([entry["decided_by"] for entry in log[:2]], ["decider", "decider"], "the decider's come first")
         self.assertEqual([entry["id"] for entry in log[:2]], ["Q8", "Q10"])
         self.assertTrue(all(entry["decided_by"] == "human" for entry in log[2:]))
+
+    def test_the_launch_line_starts_no_mcp_server_or_plugin_of_the_owners(self):
+        owner_with_a_plugin(self)
+        self.decide_rest(Q8=decision(Q8_ANSWER), Q10=decision(Q10_ANSWER))
+        calls = self.decider_calls()
+        self.assertEqual(len(calls), 2)
+        for call in calls:
+            assert_no_owner_mcp_or_plugin(self, call.argv)
 
     def test_the_launch_is_opus_at_max_effort_with_the_decision_schema_and_the_records_in_its_prompt(self):
         self.decide_rest(Q8=decision(Q8_ANSWER), Q10=decision(Q10_ANSWER))
