@@ -74,7 +74,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from wayline import HARNESS_ROOT, RESEARCH_VERSION, TAG, dag, dashboard_views, decisions
+from wayline import HARNESS_ROOT, RESEARCH_VERSION, TAG, dag, dashboard_views, decisions, replay
 from wayline.ledger import TICKET_LAUNCHED, TICKET_NEEDS_HUMAN, TICKET_RESULT, Ledger, atomic_write, conductor_holder, now_ts
 from wayline.project import (
     FINDINGS, HARNESS_JSON, NEEDS_HUMAN_NOTES, RESEARCH, ProjectError, active_path, answer, control, home, is_project, policy_for, rung_label,
@@ -82,7 +82,7 @@ from wayline.project import (
     old_project_problem, research_version, status_view, steer_ticket, switch_project,
 )
 from wayline.provenance import MANIFEST as MANIFEST_JSON, read_manifest, sha256_of
-from wayline.tickets import frontier, read_ticket, read_tickets, refresh_graph, tickets_dir
+from wayline.tickets import frontier, read_ticket, read_tickets, refresh_graph, tickets_dir, with_answers
 
 __all__ = [
     "DashboardError", "STATIC_ROOT", "LOOPBACK", "TOKEN_HEADER", "TOKEN_COOKIE", "SSE_RETRY_MS",
@@ -589,7 +589,9 @@ def graph_svg(project):
     `dag.layout` has no row to measure a width from when there are no nodes.
     """
     project = Path(project)
+    events, _ = Ledger(project).read_events()
     graph, _ = refresh_graph(project, write=False)
+    graph = with_answers(graph, replay.replay(events).answers)  # an answered decision ticket is drawn closed (ticket 131)
     entries = graph["tickets"]
     if not entries:
         return '<svg viewBox="0 0 0 0" xmlns="http://www.w3.org/2000/svg"></svg>\n'

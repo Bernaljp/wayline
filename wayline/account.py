@@ -292,10 +292,12 @@ def _waiting(context):
     from wayline.schedule import awaits_owner
     autonomy = context.harness.get("autonomy")
     decider = decider_ready(project=context.project)
+    answers = replay.replay(context.events).answers  # one the journal answered waits on nobody, closed or not (ticket 131)
     lines = []
     for number in sorted(context.tickets):
         fields = context.tickets[number]
-        if tickets.is_open_decision(fields) and awaits_owner(fields, autonomy, decider):
+        if (tickets.is_open_decision(fields) and not tickets.closes_answered(fields, answers)
+                and awaits_owner(fields, autonomy, decider)):
             lines.append("- Decision ticket %d%s: %s %s" % (
                 number, " (human only)" if fields.get("human_only") else "",
                 _one_line(decision_question(fields, context.bodies.get(number))), ANSWER_IT))

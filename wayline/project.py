@@ -38,7 +38,7 @@ from wayline.schedule import awaits_owner, steps_down
 from wayline.tickets import DECISION as DECISION_KIND
 from wayline.tickets import (
     GRAPH, SATISFIED, answer_section, by_status, empty_graph, filename, frontier, open_decisions, read_graph,
-    read_ticket, read_tickets, refresh_graph, tickets_dir, with_answer, write_ticket, relative_path,
+    read_ticket, read_tickets, refresh_graph, tickets_dir, with_answer, with_answers, write_ticket, relative_path,
 )
 
 __all__ = [
@@ -853,6 +853,9 @@ def status_view(project, refresh=True):
         graph = read_graph(project)
     if graph is None:
         graph = empty_graph()
+    view = replay.replay(events)
+    # A decision ticket the journal answered is closed in every line below, not only from the conductor's next wave (ticket 131).
+    graph = with_answers(graph, view.answers)
 
     jobs, job_problems = read_jobs(project)
     problems.extend(job_problems)
@@ -861,7 +864,6 @@ def status_view(project, refresh=True):
     if resource_problem:
         problems.append(resource_problem)
     active = read_active()
-    view = replay.replay(events)
     from wayline.decisions import decider_ready, project_log  # the decisions module imports this one
     answering, decider = answering_autonomy(project, harness, view), decider_ready(project=project)
     decided, log_problems = project_log(project, events)

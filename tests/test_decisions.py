@@ -24,7 +24,7 @@ from unittest import mock
 from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase, open_objective
 from tests.test_conductor import HELLO, WRONG, ConductorCase, done as worker_done, patch as worker_patch
-from wayline import cli, decisions, grill, notify, project, replay, schedule, tick, tickets, worker
+from wayline import cli, dag, decisions, grill, notify, project, replay, schedule, tick, tickets, worker
 from wayline.conductor import Conductor
 from wayline.dashboard import LOOPBACK, TOKEN_HEADER, make_server
 from wayline.frontmatter import dump_document
@@ -611,6 +611,60 @@ class DecisionsViewTest(BranchCase):
 
 
 # --- the answer, the pacing thresholds, and the ticket controls --------------------------------------------------
+
+
+class AnsweredWithNoConductorTest(BranchCase):
+    """Ticket 131: a `decision` journaled with no conductor running closes its ticket in every view at once.
+
+    Found live on the toy's setup (ticket 122): the decider confirmed the spec, and `status` still listed the ticket in
+    the frontier and among the open decision tickets until the conductor's first wave rewrote `graph.json`.
+    """
+
+    git = False
+
+    def test_before_the_answer_the_decision_ticket_holds_its_subgraph(self):
+        view = project.status_view(self.project)
+        self.assertEqual([entry["id"] for entry in view["frontier"]], [1, 2])
+        self.assertEqual([entry["id"] for entry in view["decisions"]], [2])
+
+    def test_the_owner_s_answer_drops_it_from_the_frontier_and_the_open_decision_tickets(self):
+        project.answer(self.project, 2, "one line")
+        view = project.status_view(self.project)
+        self.assertEqual([entry["id"] for entry in view["frontier"]], [1, 3], "the subgraph it paused is released")
+        self.assertEqual(view["decisions"], [])
+        self.assertEqual(view["counts"]["done"], 1)
+        self.assertEqual(view["counts"]["open"], 4)
+
+    def test_the_decider_s_answer_drops_it_too(self):
+        self.ledger.append_event("decision", {"ticket": 2, "answer": "one line", "decided_by": "decider",
+                                              "rationale": "the report is short", "confidence": 0.8}, ticket=2)
+        view = project.status_view(self.project, refresh=False)
+        self.assertEqual([entry["id"] for entry in view["frontier"]], [1, 3])
+        self.assertEqual(view["decisions"], [])
+
+    def test_the_dashboard_s_graph_draws_it_closed(self):
+        from wayline import dashboard
+        project.answer(self.project, 2, "one line")
+        drawn = dashboard.graph_svg(self.project)
+        self.assertEqual(drawn, dag.svg([1, 2, 3, 4, 5], [(2, 3), (1, 4), (3, 5)],
+                                        {1: "frontier", 2: "done", 3: "frontier", 4: "open", 5: "open"}))
+
+    def test_the_account_no_longer_says_it_waits_on_the_owner(self):
+        from wayline import account
+        self.assertEqual(account.account_view(self.project)["waiting"], 1)
+        project.answer(self.project, 2, "one line")
+        self.assertEqual(account.account_view(self.project)["waiting"], 0)
+
+    def test_an_answer_written_in_the_file_and_not_yet_journaled_leaves_it_open(self):
+        self.write_answer(2, "one line")
+        view = project.status_view(self.project)
+        self.assertEqual([entry["id"] for entry in view["decisions"]], [2])
+
+    def test_a_rerun_after_the_answer_opens_it_again(self):
+        project.answer(self.project, 2, "one line")
+        self.ledger.append_event("ticket_rerun", {"ticket": 2}, ticket=2)
+        view = project.status_view(self.project)
+        self.assertEqual([entry["id"] for entry in view["decisions"]], [2])
 
 
 class AnswerTest(BranchCase):

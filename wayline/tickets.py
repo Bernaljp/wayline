@@ -588,6 +588,27 @@ def is_open_decision(entry):
     return entry["kind"] == DECISION and entry["status"] not in SATISFIED + ("parked",)
 
 
+def closes_answered(entry, answers):
+    """Whether this ticket is a decision ticket the journal answered and its file still holds open (ticket 131).
+
+    `answers` is replay's `answers`, by ticket id. The conductor marks such a ticket `done` in its file at its next
+    wave (ticket 35), and the `decision` is the record of its closing, so a view reads it closed from the journal's
+    answer rather than waiting for that wave: an answer given before a run or while it is stopped leaves no gap.
+    """
+    return entry["kind"] == DECISION and entry["id"] in answers and entry["status"] not in SATISFIED + ("parked",)
+
+
+def with_answers(graph, answers):
+    """The graph with every decision ticket the journal answered held `done`, as the conductor's next wave writes it.
+
+    The frontier, the open decision tickets, and the counts that `status`, the dashboard, and `ACCOUNT.md` show are
+    read from this, so a `decision` journaled with no conductor running closes its ticket in each of them at once.
+    The graph is not changed; a copy is returned.
+    """
+    return dict(graph, tickets=[dict(entry, status="done") if closes_answered(entry, answers) else entry
+                                for entry in graph["tickets"]])
+
+
 def paused_by(graph, identifiers):
     """The ids of the graph that wait on any of these tickets, down the blocking edges, transitively.
 

@@ -8,11 +8,11 @@ On the toy's live setup (ticket 122, `docs/verification/m8.md`), the decider con
 
 **Blocked by:** None - can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#338](https://github.com/Bernaljp/wayline/issues/338) (mirror; the local file is the source)
 
 **Milestone:** after M8 (v1.1.x). **Spec:** Implementation Decisions 2 (replay), 8 (status and the dashboard); ticket 122's live record.
 
-- [ ] Over a temporary project, a `decision` journaled with no conductor running drops its ticket from status's frontier and open decision tickets at once.
+- [x] Over a temporary project, a `decision` journaled with no conductor running drops its ticket from status's frontier and open decision tickets at once.
 - [ ] `python -m unittest` passes.

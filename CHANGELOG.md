@@ -47,6 +47,12 @@ lists it read-only, marked with its tag.
   dashboard's graph of the M8 toy run (ticket 96 blocked by 115 and 116, and 116 by 115) answered 500, "the edges form
   a cycle through node 115". It now lays out one parent at a time, so the stack is the path and only a real cycle
   raises.
+- An answered decision ticket is closed in the views at once (ticket 131; Implementation Decisions 2 and 8). `wayline
+  status`, the dashboard's overview and graph, and `research/ACCOUNT.md`'s waiting-on-you lines read a decision ticket
+  the journal answered as `done` (`tickets.with_answers`, over replay's answers), as the conductor's next wave writes
+  it in the file. On the toy's live setup (ticket 122) the decider confirmed the spec and `status` still listed the
+  ticket in the frontier and among the open decision tickets, blocking all, for more than half an hour, until the
+  first wave. An answer written in the file and not yet journaled still shows open, and a rerun opens it again.
 - The harness's user guide (ticket 124), in place of the documentation site the M8 tickets named: Markdown under
   `docs/guide/`, readable on GitHub, its index linked from `README.md`, one page per topic (getting started, talking
   with a project, objectives and goals, starting midway, the research, the paper, the run, software and environments,
