@@ -222,7 +222,11 @@ class CardTest(ChatCase):
         journal = (self.project / "research" / "journal.jsonl").read_bytes()
         record = self.say("order the paper for NeurIPS")
         self.assertEqual(record["card"], dict(ORDER, state="open"))
-        self.assertEqual((self.project / "research" / "journal.jsonl").read_bytes(), journal)
+        after = (self.project / "research" / "journal.jsonl").read_bytes()
+        self.assertTrue(after.startswith(journal))
+        added = [json.loads(line) for line in after[len(journal):].splitlines()]
+        self.assertEqual([(event["event"], event["payload"]["report"]) for event in added], [("report_rendered", "account")],
+                         "nothing but the account the session reads first is rendered before it (ticket 131)")
 
     def test_a_document_asking_to_raise_a_budget_makes_at_most_a_card_and_harness_json_is_untouched(self):
         raise_it = {"action": "budget", "args": {"name": "gpu_hours", "hours": None}, "what": "Lift the GPU budget.",

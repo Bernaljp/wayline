@@ -24,7 +24,7 @@ from unittest import mock
 from tests.paths import HARNESS_ROOT
 from tests.projects import ProjectTestCase, open_objective
 from tests.test_conductor import HELLO, WRONG, ConductorCase, done as worker_done, patch as worker_patch
-from wayline import cli, decisions, grill, notify, project, replay, schedule, tick, tickets, worker
+from wayline import account, chat, cli, dag, dashboard, decisions, grill, notify, project, replay, schedule, tick, tickets, worker
 from wayline.conductor import Conductor
 from wayline.dashboard import LOOPBACK, TOKEN_HEADER, make_server
 from wayline.frontmatter import dump_document
@@ -522,9 +522,9 @@ class DecisionsViewTest(BranchCase):
         self.assertEqual([entry["id"] for entry in view["open"]], [2])
         entry = view["open"][0]
         self.assertEqual({key: entry[key] for key in ("question", "options", "recommended", "blocking", "human_only", "pauses", "awaits",
-                                                      "answered", "written", "proposed_by")},
+                                                      "written", "proposed_by")},
                          {"question": "Which form does the beta report take?", "options": ["one line", "a table"], "recommended": "one line",
-                          "blocking": "subgraph", "human_only": False, "pauses": [3, 5], "awaits": "owner", "answered": None,
+                          "blocking": "subgraph", "human_only": False, "pauses": [3, 5], "awaits": "owner",
                           "written": None, "proposed_by": "planner"})
         self.assertEqual(len(entry["evidence"]), 2)
         self.assertEqual(view["log"], [])
@@ -557,13 +557,14 @@ class DecisionsViewTest(BranchCase):
         self.assertEqual([(entry["id"], entry["awaits"]) for entry in project.status_view(self.project, refresh=False)["decisions"]],
                          [(2, "owner")])
 
-    def test_an_answer_not_yet_closed_and_one_written_in_the_file_are_both_shown(self):
+    def test_a_journaled_answer_leaves_the_open_tickets_and_one_written_in_the_file_is_shown(self):
         project.answer(self.project, 2, "one line")
         decisions.open_decision(self.project, "May the data leave the machine?", notify=self.notify)
         self.write_answer(6, "no")
-        entries = {entry["id"]: entry for entry in decisions.decisions_view(self.project)["open"]}
-        self.assertEqual(entries[2]["answered"], {"answer": "one line", "decided_by": "human"})
-        self.assertEqual((entries[6]["answered"], entries[6]["written"]), (None, "no"))
+        view = decisions.decisions_view(self.project)
+        self.assertEqual([(entry["id"], entry["written"]) for entry in view["open"]], [(6, "no")],
+                         "ticket 2 is done once its answer is journaled (ticket 131), before the conductor's next wave")
+        self.assertEqual([entry["ticket"] for entry in view["log"]], [2])
 
     def test_the_log_puts_the_decider_s_decisions_first_and_marks_what_was_superseded(self):
         grill.ask(self.project, "Which metric does the goal use?", options=["auroc", "accuracy"], recommended="auroc")
@@ -611,6 +612,87 @@ class DecisionsViewTest(BranchCase):
 
 
 # --- the answer, the pacing thresholds, and the ticket controls --------------------------------------------------
+
+
+class AnsweredWithNoConductorTest(BranchCase):
+    """Ticket 131: a `decision` journaled with no conductor running makes its ticket done in every view at once.
+
+    Found live on the toy's setup (ticket 122): the decider confirmed the spec, and `status` still listed the ticket in
+    the frontier and among the open decision tickets until the conductor's first wave rewrote `graph.json`.
+    """
+
+    git = False
+
+    def test_before_the_answer_the_decision_ticket_holds_its_subgraph(self):
+        view = project.status_view(self.project)
+        self.assertEqual([entry["id"] for entry in view["frontier"]], [1, 2])
+        self.assertEqual([entry["id"] for entry in view["decisions"]], [2])
+
+    def test_the_owner_s_answer_drops_it_from_the_frontier_and_the_open_decision_tickets(self):
+        project.answer(self.project, 2, "one line")
+        view = project.status_view(self.project)
+        self.assertEqual([entry["id"] for entry in view["frontier"]], [1, 3], "the subgraph it paused is released")
+        self.assertEqual(view["decisions"], [])
+        self.assertEqual(view["counts"]["done"], 1)
+        self.assertEqual(view["counts"]["open"], 4)
+
+    def test_the_decider_s_answer_drops_it_too(self):
+        self.ledger.append_event("decision", {"ticket": 2, "answer": "one line", "decided_by": "decider",
+                                              "rationale": "the report is short", "confidence": 0.8}, ticket=2)
+        view = project.status_view(self.project, refresh=False)
+        self.assertEqual([entry["id"] for entry in view["frontier"]], [1, 3])
+        self.assertEqual(view["decisions"], [])
+
+    def test_the_dashboard_s_graph_draws_it_done(self):
+        project.answer(self.project, 2, "one line")
+        self.assertEqual(dashboard.graph_svg(self.project), dag.svg(
+            [1, 2, 3, 4, 5], [(2, 3), (1, 4), (3, 5)], {1: "frontier", 2: "done", 3: "frontier", 4: "open", 5: "open"}))
+
+    def test_a_journal_that_cannot_be_read_still_draws_the_graph_from_the_files(self):
+        journal = self.project / "research" / "journal.jsonl"
+        journal.unlink()
+        journal.mkdir()
+        self.assertEqual(dashboard.graph_svg(self.project), dag.svg(
+            [1, 2, 3, 4, 5], [(2, 3), (1, 4), (3, 5)], {1: "frontier", 2: "frontier", 3: "open", 4: "open", 5: "open"}))
+
+    def test_the_dashboard_s_board_reads_it_done_and_not_waiting_on_the_owner(self):
+        project.answer(self.project, 2, "one line")
+        self.assertEqual({fields["id"]: fields["status"] for fields in dashboard.tickets_view(self.project)},
+                         {1: "open", 2: "done", 3: "open", 4: "open", 5: "open"})
+        view = decisions.decisions_view(self.project)
+        self.assertEqual(view["open"], [])
+        self.assertEqual([(entry["ticket"], entry["decided_by"]) for entry in view["log"]], [(2, "human")])
+
+    def test_the_account_no_longer_says_it_waits_on_the_owner(self):
+        self.assertEqual(account.account_view(self.project)["waiting"], 1)
+        project.answer(self.project, 2, "one line")
+        self.assertEqual(account.account_view(self.project)["waiting"], 0)
+
+    def test_the_chat_s_digest_no_longer_says_it_waits_on_the_owner(self):
+        account.render_account(self.project)
+        digest = self.project / account.ACCOUNT_PATH
+        self.assertIn("Decision ticket 2", digest.read_text(encoding="utf-8"))
+        project.answer(self.project, 2, "one line")
+        fake = self.enterContext(worker.use_fake())
+        fake.script(worker.Envelope(session_id="s-1", structured_output={"reply": "Nothing waits on you.", "card": None},
+                                    answered=True), role=chat.ROLE)
+        chat.post(self.project, "Does anything wait on me?")
+        chat.answer_queued(self.project)
+        self.assertNotIn("Decision ticket 2", digest.read_text(encoding="utf-8"),
+                         "the account the chat's session reads first is rendered from the journal before it launches")
+
+    def test_an_answer_written_in_the_file_and_not_yet_journaled_leaves_it_open(self):
+        self.write_answer(2, "one line")
+        view = project.status_view(self.project)
+        self.assertEqual([entry["id"] for entry in view["decisions"]], [2])
+        self.assertEqual([(entry["id"], entry["written"]) for entry in decisions.decisions_view(self.project)["open"]],
+                         [(2, "one line")])
+
+    def test_a_rerun_after_the_answer_opens_it_again(self):
+        project.answer(self.project, 2, "one line")
+        self.ledger.append_event("ticket_rerun", {"ticket": 2}, ticket=2)
+        view = project.status_view(self.project)
+        self.assertEqual([entry["id"] for entry in view["decisions"]], [2])
 
 
 class AnswerTest(BranchCase):

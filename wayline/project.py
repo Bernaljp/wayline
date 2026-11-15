@@ -37,7 +37,7 @@ from wayline.resources import (
 from wayline.schedule import awaits_owner, steps_down
 from wayline.tickets import DECISION as DECISION_KIND
 from wayline.tickets import (
-    GRAPH, SATISFIED, answer_section, by_status, empty_graph, filename, frontier, open_decisions, read_graph,
+    GRAPH, SATISFIED, answer_section, answered_graph, answers_applied, by_status, empty_graph, filename, frontier, open_decisions, read_graph,
     read_ticket, read_tickets, refresh_graph, tickets_dir, with_answer, write_ticket, relative_path,
 )
 
@@ -845,14 +845,14 @@ def status_view(project, refresh=True):
         tickets = {fields["id"]: fields for fields in read_tickets(project)}
     except (ValueError, OSError) as failure:
         problems.append("tickets: %s" % failure)
+    view = replay.replay(events)
     try:
-        graph, regenerated = refresh_graph(project, ledger=ledger, events=events, write=refresh)
+        # A decision ticket the journal answered is done in every line below, not only from the conductor's next wave (ticket 131).
+        graph, regenerated = answered_graph(project, events, ledger=ledger, write=refresh)
     except (ValueError, OSError) as failure:
         # A ticket file a human broke must not blank the view: the last good graph still prints.
         problems.append("graph.json: %s" % failure)
-        graph = read_graph(project)
-    if graph is None:
-        graph = empty_graph()
+        graph = answers_applied(read_graph(project) or empty_graph(), view.answers)
 
     jobs, job_problems = read_jobs(project)
     problems.extend(job_problems)
@@ -861,7 +861,6 @@ def status_view(project, refresh=True):
     if resource_problem:
         problems.append(resource_problem)
     active = read_active()
-    view = replay.replay(events)
     from wayline.decisions import decider_ready, project_log  # the decisions module imports this one
     answering, decider = answering_autonomy(project, harness, view), decider_ready(project=project)
     decided, log_problems = project_log(project, events)
