@@ -2286,7 +2286,7 @@ function route(event) {
 
 function showView(name) {
   state.view = name;
-  if (name !== 'reading' && !document.getElementById('reading-panel').hidden) closeReadingPanel();
+  hideReadingPanel(name === 'reading');
   for (const view of document.querySelectorAll('main .view')) view.hidden = view.dataset.view !== name;
   document.getElementById('strip').hidden = name === 'projects' || !state.project || readOnlyNow();
   document.body.dataset.view = name;
@@ -3930,6 +3930,7 @@ const reading = {
   index: new Map(), // item id -> { item, part } of every sentence and figure drawn
   selected: null, // { project, id } of the sentence or figure whose panel is open
   attached: null, // { project, id } a Comment or This is wrong attached to the chat's next message
+  lens: null, // the lens clicked in this page, which a browser refusing storage still keeps
   focus: null, // an item id to open once the article is drawn (an item link landed on it)
   scrollTo: null, // a part to scroll to once drawn (the Paper view's read link)
 };
@@ -3939,11 +3940,12 @@ function readingRoute(project) {
 }
 
 function readingLens() {
-  const kept = remembered(STORE.lens);
+  const kept = reading.lens || remembered(STORE.lens);
   return LENSES.some(([name]) => name === kept) ? kept : 'source';
 }
 
 function setLens(name) {
+  reading.lens = name;
   remember(STORE.lens, name);
   markChoice(document.getElementById('reading-lens'), name);
   const article = document.getElementById('reading-article');
@@ -3979,7 +3981,9 @@ async function loadReading() {
   }
   try {
     const view = await get(projectPath('/paper/read'), 'paper-read');
-    if (view && project === state.project) renderReading(view, project);
+    if (project !== state.project) return;
+    if (view) renderReading(view, project);
+    else if (reading.view) showReadingTargets(project);
   } catch (failure) {
     if (project === state.project) replace(document.getElementById('reading-body'), [errorState(failure)]);
   }
@@ -4089,6 +4093,17 @@ function renderReading(view, project) {
   ]);
   if (document.scrollingElement) document.scrollingElement.scrollTop = scroll;
   renderLegend();
+  // The panel open before the article was drawn again shows what the new answer says of its sentence.
+  if (!showReadingTargets(project) && reading.selected && reading.selected.project === project) {
+    openReadingPanel(project, reading.selected.id, true);
+  }
+}
+
+// What the article was opened for: a part to scroll to (the Paper view's read link), and a sentence or a figure an item
+// link named, whose panel it opens; true when it opened one.
+function showReadingTargets(project) {
+  const article = document.getElementById('reading-article');
+  if (!article) return;
   if (reading.scrollTo) {
     const target = document.getElementById(`reading-part-${reading.scrollTo}`);
     reading.scrollTo = null;
@@ -4100,9 +4115,9 @@ function renderReading(view, project) {
     const node = article.querySelector(`[data-item="${CSS.escape(id)}"]`);
     if (node && node.scrollIntoView) node.scrollIntoView({ block: 'center' });
     openReadingPanel(project, id);
-  } else if (reading.selected && reading.selected.project === project) {
-    openReadingPanel(project, reading.selected.id, true);
+    return true;
   }
+  return false;
 }
 
 // What each tint means under the lens shown, with how many sentences carry it.
@@ -4125,7 +4140,7 @@ function renderLegend() {
   } else {
     const shades = objectiveShades(view);
     rows = (view.objectives || []).map((objective) => [{ 'data-objective': shades[objective.id] },
-      `${objective.id} ${objective.status === 'open' || objective.status === 'answered' ? '' : `(${objective.status}) `}${objective.text || ''}`,
+      `${objective.id} ${LIVE_OBJECTIVE.has(objective.status) ? '' : `(${objective.status}) `}${objective.text || ''}`,
       counted((item) => objectiveOf(item, shades) === objective.id)]);
     rows.push([{ 'data-objective': 'none' }, 'no objective', counted((item) => objectiveOf(item, shades) === null)]);
   }
@@ -4140,29 +4155,31 @@ function panelSection(name, children) {
   return children.length ? [el('h3', { class: 'sub', text: name }), ...children] : [];
 }
 
+// A file a tag or a figure names, in the viewer: Markdown rendered, anything else (a script, a JSON file) as it is.
+function openFileButton(path, text) {
+  const button = el('button', { type: 'button', class: 'action', text: text || 'open' });
+  button.addEventListener('click', () => openViewer(path, { title: path, code: !/\.md$/i.test(path) }));
+  return button;
+}
+
 function tagLine(project, tag) {
-  const head = [el('span', { class: `chip s-${tag.kind || 'malformed'}`, text: tag.kind || 'tag' })];
+  const head = [el('span', { class: 'chip tag-kind', text: tag.kind || 'tag' })];
   const lines = [];
-  if (tag.kind === 'res') {
+  if (tag.kind === 'res' && tag.path) {
     head.push(document.createTextNode(' run '), tag.ticket ? itemLink(project, String(tag.ticket), tag.run) : document.createTextNode(tag.run || '?'),
       document.createTextNode(` · ${tag.path}#${tag.locator}`));
-    for (const line of tag.held || []) lines.push(el('code', { class: 'held', text: line }));
-  } else if (tag.kind === 'code') {
+  } else if (tag.kind === 'code' && tag.path) {
     head.push(document.createTextNode(` ${tag.path}#${tag.locator}`));
-    for (const line of tag.held || []) lines.push(el('code', { class: 'held', text: line }));
-  } else if (tag.kind === 'ref') {
+  } else if (tag.kind === 'ref' && 'slug' in tag) {
     head.push(document.createTextNode(` ${tag.work || tag.slug || tag.tag}${tag.locator ? ` (${tag.locator})` : ''}`));
-    if (tag.mark) lines.push(el('span', { class: 'chip s-to-be-resolved', text: tag.mark }));
-  } else if (tag.kind === 'doc') {
+    if (tag.mark) lines.push(el('span', { class: 'chip tag-kind', text: tag.mark }));
+  } else if (tag.kind === 'doc' && tag.document) {
     head.push(document.createTextNode(' '), itemLink(project, tag.document), document.createTextNode(` at ${tag.locator}`));
   } else {
-    head.push(document.createTextNode(` ${tag.tag}`));
+    head.push(document.createTextNode(` ${tag.tag}`)); // a tag code could not read, shown as it is written
   }
-  if (tag.open) {
-    const open = el('button', { type: 'button', class: 'action', text: 'open' });
-    open.addEventListener('click', () => openViewer(tag.open, { title: tag.open, code: !/\.md$/i.test(tag.open) }));
-    head.push(document.createTextNode(' '), open);
-  }
+  for (const line of tag.held || []) lines.push(el('code', { class: 'held', text: line }));
+  if (tag.open) head.push(document.createTextNode(' '), openFileButton(tag.open));
   if (tag.problem) lines.push(el('span', { class: 'problems', text: tag.problem }));
   return el('li', { class: 'tag-line' }, [el('p', {}, head), ...lines]);
 }
@@ -4228,15 +4245,10 @@ function figurePanel(project, item) {
     ...(item.result ? [document.createTextNode(' · draws '), ...itemLinks(project, [item.result, ...(item.objectives || [])])] : [])]));
   const behind = [];
   if (item.image) behind.push(viewButton(item.image, `Figure ${item.id.slice(1)}`, 'the image'));
-  if (item.script) {
-    const script = el('button', { type: 'button', class: 'action', text: 'the script' });
-    script.addEventListener('click', () => openViewer(item.script, { title: item.script, code: true }));
-    behind.push(script);
-  }
+  if (item.script) behind.push(openFileButton(item.script, 'the script'));
   for (const data of item.data || []) {
-    const open = el('button', { type: 'button', class: 'action', text: `data: ${data.path}${data.run ? ` (${data.run})` : ''}` });
+    const open = openFileButton(data.path, `data: ${data.path}${data.run ? ` (${data.run})` : ''}`);
     open.disabled = !data.open;
-    open.addEventListener('click', () => openViewer(data.path, { title: data.path, code: !/\.md$/i.test(data.path) }));
     behind.push(open);
   }
   children.push(...panelSection('what stands behind it', behind.length ? [el('p', { class: 'inline acts' }, behind)] : []));
@@ -4262,6 +4274,7 @@ function openReadingPanel(project, id, quietly) {
     if (!quietly) say(`${id}: not in the version shown`, true);
     return;
   }
+  if (!reading.selected || reading.selected.id !== id || reading.selected.project !== project) reading.attached = null;
   reading.selected = { project, id };
   const { item, part } = entry;
   document.getElementById('reading-panel-title').textContent = item.type === 'figure' ? `Figure ${item.id.slice(1)} (${item.id})` : `${item.id} · ${part ? part.title : item.part}`;
@@ -4283,9 +4296,21 @@ function openReadingPanel(project, id, quietly) {
 
 function closeReadingPanel() {
   reading.selected = null;
+  reading.attached = null;
   document.getElementById('reading-panel').hidden = true;
   document.body.dataset.panel = 'closed';
   for (const node of document.querySelectorAll('#reading-article .selected')) node.classList.remove('selected');
+}
+
+// The panel goes with its view and comes back with it: the sentence stays chosen while another view is shown.
+function hideReadingPanel(shown) {
+  const panel = document.getElementById('reading-panel');
+  if (!shown) {
+    panel.hidden = true;
+    document.body.dataset.panel = 'closed';
+  } else if (panel.hidden && reading.selected && reading.index.has(reading.selected.id)) {
+    openReadingPanel(reading.selected.project, reading.selected.id, true);
+  }
 }
 
 // Comment and This is wrong: the note goes to the chat with the sentence's id attached, as a feedback or a mark the
@@ -4542,7 +4567,8 @@ async function sendChat(event) {
   if (viewer.item && viewer.item.project === project && CHAT_ITEM.test(viewer.item.id)) body.item = viewer.item.id;
   else {
     // A sentence or a figure of the reading view: the one a Comment or This is wrong attached, else the one whose panel is open.
-    const shown = [reading.attached, reading.selected].find((entry) => entry && entry.project === project && CHAT_ITEM.test(entry.id));
+    const shown = state.view === 'reading'
+      ? [reading.attached, reading.selected].find((entry) => entry && entry.project === project && CHAT_ITEM.test(entry.id)) : null;
     if (shown) body.item = shown.id;
   }
   const send = document.getElementById('chat-send');

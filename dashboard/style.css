@@ -46,6 +46,9 @@
   --index-w: 168px;
   --page: calc(var(--measure) + var(--index-w) + var(--space-5));
   --header-h: 88px;
+  /* The reading view's panel (ticket 141): its width beside the text, and how tall it is as a phone's bottom sheet. */
+  --panel-w: min(420px, 40vw);
+  --sheet-h: 70dvh;
 
   --ui: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --mono: var(--ui);
@@ -103,6 +106,7 @@
   --obj-5: #0f766e; --obj-5-soft: #d9efec;
   --obj-6: #a3195b; --obj-6-soft: #f8e1ec;
   --obj-aside: #8b939c; --obj-aside-soft: #eceeeb;
+  --plot-ground: #ffffff;   /* a figure's ground: white in both themes, as it is printed */
   --chk-passed: #116b3d; --chk-passed-soft: #dcf0e3;
   --chk-failed: #a52725; --chk-failed-soft: #f8dfdd;
 }
@@ -558,7 +562,7 @@ dl.fields dd.mono { color: var(--ink-2); }
 /* Where a ticket stands, said once as a color, and read by whatever shows it: a chip's text, a
    journal event's name, a board card's leading edge, and a graph node's ring. A status with no rule
    here (open, and anything new) falls back to each reader's own neutral. */
-.s-done, .s-accepted { --status: var(--done); }
+.s-done, .s-accepted, .s-passed { --status: var(--done); }
 .s-running { --status: var(--running); }
 .s-failed, .s-blocked, .s-needs_human { --status: var(--failed); }
 .s-paused, .s-parked { --status: var(--paused); }
@@ -1187,7 +1191,7 @@ article.paper-text { max-width: 74ch; font-size: var(--text-lg); line-height: 1.
   --tint: transparent; --mark: transparent; --style: solid; --ring: transparent;
   background: var(--tint); text-decoration-line: underline; text-decoration-style: var(--style); text-decoration-color: var(--mark);
   text-decoration-thickness: 2px; text-underline-offset: 4px; outline: 1px dashed var(--ring); outline-offset: 1px;
-  border-radius: 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; cursor: pointer;
+  border-radius: var(--radius-1); box-decoration-break: clone; -webkit-box-decoration-break: clone; cursor: pointer;
 }
 .paper-text .sentence:hover { background: color-mix(in srgb, var(--tint) 60%, var(--accent-soft)); }
 .paper-text .sentence:focus-visible, .paper-text .sentence.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -1221,12 +1225,13 @@ article.paper-text { max-width: 74ch; font-size: var(--text-lg); line-height: 1.
 .paper-text[data-lens="check"] .paper-figure[data-check="failed"],
 .paper-text[data-lens="objective"] .paper-figure[data-objective="2"] { border-style: dashed; }
 .paper-text .paper-figure:focus-visible, .paper-text .paper-figure.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
-.paper-figure img { display: block; max-width: 100%; height: auto; margin: 0 auto var(--space-2); background: #ffffff; }
+/* A figure is drawn on white in either theme, as Marks shows a plot. */
+.paper-figure img { display: block; max-width: 100%; height: auto; margin: 0 auto var(--space-2); background: var(--plot-ground); }
 
 /* The panel: beside the text, under the header, out of the polls' reach; a bottom sheet on a phone. */
 .reading-panel {
   position: fixed; right: var(--gutter); top: calc(var(--header-h) + var(--space-3)); bottom: var(--space-4); z-index: 25;
-  width: min(420px, 40vw); display: flex; flex-direction: column;
+  width: var(--panel-w); display: flex; flex-direction: column;
   background: var(--surface); color: var(--ink); border: 1px solid var(--line-strong); border-radius: var(--radius-2);
 }
 .reading-panel[hidden] { display: none; }
@@ -1244,7 +1249,7 @@ article.paper-text { max-width: 74ch; font-size: var(--text-lg); line-height: 1.
   font-size: var(--text-sm); overflow-wrap: anywhere; white-space: pre-wrap;
 }
 .reading-panel-acts { display: flex; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-top: 1px solid var(--line); }
-body[data-panel="open"][data-view="reading"] #view-reading { padding-right: calc(min(420px, 40vw) + var(--space-4)); }
+body[data-panel="open"][data-view="reading"] #view-reading { padding-right: calc(var(--panel-w) + var(--space-4)); }
 pre.viewer-code { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-sm); }
 
 /* --- the narrow width, and reduced motion ----------------------------------------------------- */
@@ -1290,11 +1295,11 @@ pre.viewer-code { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var
   body[data-chat="open"] { overflow: hidden; }
   /* The reading panel is a bottom sheet a thumb reaches, the text above it still in view. */
   .reading-panel {
-    left: 0; right: 0; top: auto; bottom: 0; width: 100vw; max-height: 70dvh;
+    left: 0; right: 0; top: auto; bottom: 0; width: 100vw; max-height: var(--sheet-h);
     border-width: 1px 0 0; border-radius: var(--radius-2) var(--radius-2) 0 0;
   }
   .reading-panel-acts button.action, #reading-panel-close { min-height: 44px; }
-  body[data-panel="open"][data-view="reading"] #view-reading { padding-right: 0; padding-bottom: 70dvh; }
+  body[data-panel="open"][data-view="reading"] #view-reading { padding-right: 0; padding-bottom: var(--sheet-h); }
   article.paper-text { font-size: var(--text-md); }
   .legend-label { max-width: 28ch; }
 }

@@ -11,7 +11,7 @@ import json
 from tests import reading_fixture as fixture
 from tests.projects import ProjectTestCase
 from tests.test_dashboard_views import Serving
-from wayline import chat, dashboard_views
+from wayline import chat, dashboard_views, provenance
 from wayline import project as projects
 
 
@@ -52,6 +52,12 @@ class MainTextTest(ReadingCase):
         self.assertIn(("results", 3, "The column lifts the AUROC to near the ceiling", "R1"), headings)
         self.assertIn(("introduction", 2, "Interactions in linear models", "introduction-interactions"), headings)
         self.assertNotIn("supplement", [block["part"] for block in view["blocks"]])
+
+    def test_a_tag_in_a_heading_is_hidden_as_a_sentences_is(self):
+        self.book.write_markdown("paper/discussion.md", fixture.TEXTS["discussion"].replace(
+            "## Scope {#discussion-scope}", "## Scope of the gain {res:t12-a1/analysis/E2/paired.json#paired_gain} {#discussion-scope}"))
+        [heading] = [block for block in self.read()["blocks"] if block["type"] == "heading" and block["part"] == "discussion"]
+        self.assertEqual((heading["text"], heading["id"]), ("Scope of the gain", "discussion-scope"))
 
 
 class SourceTest(ReadingCase):
@@ -143,6 +149,17 @@ class CheckTest(ReadingCase):
         self.assertEqual([check["pass"] for check in closes["checks"]], [True])
 
 
+    def test_a_numbers_verdict_on_a_findings_sentence_reaches_the_paper_sentence_with_its_words_and_other_tags(self):
+        from wayline import sections
+        sections.file_finding(self.book, {"id": "t12-a1-f3", "ticket": 12, "text": fixture.CLOSES, "provenance": [], "negative": False,
+                                          "heading": "The column lifts the AUROC to near the ceiling", "replaces": None, "objectives": ["O1"]})
+        retagged = fixture.CLOSES + " {res:t12-a1/analysis/E2/paired.json#mean_auroc_with}"
+        self.book.write_markdown("paper/results.md", fixture.TEXTS["results"].replace(fixture.CLOSES, retagged))
+        closes = self.sentence(retagged)
+        self.assertEqual([(check["check"], check["pass"]) for check in closes["checks"]], [("numbers check", False)])
+        self.assertEqual(closes["check"], "failed")
+
+
 class WrittenFromTest(ReadingCase):
     def test_a_sentence_names_the_finding_it_was_written_from_its_ticket_run_result_and_objectives(self):
         view = self.read()
@@ -229,6 +246,16 @@ class PollTest(ReadingCase):
         self.assertEqual(second.status, 200)
         fixture._verdict(self.book, fixture.claim_subject(fixture.PINNED), "claim_support", True)
         self.assertEqual(self.api("/paper/read", {"If-None-Match": second.etag}).status, 200)
+
+    def test_the_tag_moves_with_the_claim_classes_a_dossier_and_a_file_a_tag_reads(self):
+        for change in (
+                lambda: self.book.write_json(provenance.CLAIMS_CACHE, {"schema_version": 1, "classes": {}}),
+                lambda: (self.project / "research" / "refs" / "paper-a" / "dossier.json").write_text(
+                    (self.project / "research" / "refs" / "paper-a" / "dossier.json").read_text(encoding="utf-8") + "\n", encoding="utf-8"),
+                lambda: (self.project / "tests" / "test_train.py").write_text(fixture.TEST_TRAIN + "# moved\n", encoding="utf-8")):
+            before = self.api("/paper/read")
+            change()
+            self.assertEqual(self.api("/paper/read", {"If-None-Match": before.etag}).status, 200)
 
     def test_an_unreadable_manifest_still_shows_the_text_and_says_why_its_tags_hold_nothing(self):
         (self.project / "research" / "manifest.json").write_text("{not json", encoding="utf-8")

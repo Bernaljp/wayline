@@ -58,12 +58,15 @@ HELD_CHARS = 240          # what a tag's held value shows of a long line or a la
 HELD_LINES = 3            # the lines a text locator shows at most
 QUOTED_MIN = 40           # a build's point names a sentence when it quotes this much of it, or all of a shorter one
 
-_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 _ATTRIBUTE = re.compile(r"\s*\{#([^\s{}]+)[^{}]*\}\s*$")
 _CROSS = re.compile(r"@(fig|tbl):([A-Za-z0-9_-]+)")
 _LABEL = re.compile(r"\s*\{#(?:eq|fig|tbl):[^{}]*\}")
 _PLOT = re.compile(r"\s*\{plot:[^{}]*\}")
 _RUN_TICKET = re.compile(r"^t([1-9][0-9]*)-a[1-9][0-9]*$")
+GATE_NAMES = {"kill_argument": "the kill argument", "paper_read": "the independent read", "sampled_verdicts": "the sampled verdicts"}
+WEB_IMAGES = (".png", ".svg", ".jpg", ".jpeg")  # what a browser draws; a figure's PDF is the compilation's
+_RESULT_ID = re.compile(r"^R[1-9][0-9]*$")
+_OBJECTIVE_ID = re.compile(r"^O[1-9][0-9]*$")
 
 
 def _one_line(text):
@@ -76,69 +79,6 @@ def plain(text):
     text = _CROSS.sub(lambda found: "%s %s" % ("Figure" if found.group(1) == "fig" else "Table",
                                                found.group(2)[1:] if found.group(2)[:1] in "FT" else found.group(2)), text)
     return re.sub(r"\s+([.,;:!?])", r"\1", _one_line(text))
-
-
-# --- the walk -------------------------------------------------------------------------------------------------------
-
-
-def walk(markdown):
-    """The blocks of one part: `heading`, `paragraph` (its `Sentence`s, as `provenance.sentences` splits them), and `code`.
-
-    The walk is `provenance.prose_sentences`'s, block for block: what it skips (tables, comments, footnote definitions,
-    the records) is skipped here, and every paragraph it splits is split here, so the sentences come in its order.
-    """
-    blocks, current = [], []
-    in_records, fence, fenced = False, None, []
-
-    def flush(kind="paragraph"):
-        if current:
-            found = provenance.sentences(" ".join(current))
-            if found:
-                blocks.append({"type": kind, "sentences": found})
-            current.clear()
-
-    for raw in str(markdown or "").splitlines():
-        line = raw.strip()
-        if fence is not None:
-            if line.startswith(fence):
-                blocks.append({"type": "code", "text": "\n".join(fenced)})
-                fence, fenced = None, []
-            else:
-                fenced.append(raw)
-            continue
-        if in_records:
-            if line == provenance.RECORDS_END:
-                in_records = False
-            continue
-        if line == provenance.RECORDS_BEGIN:
-            flush()
-            in_records = True
-            continue
-        opened = provenance._FENCE.match(line)
-        if opened:
-            flush()
-            fence = opened.group(1)
-            continue
-        heading = _HEADING.match(line)
-        if heading:
-            flush()
-            text = heading.group(2)
-            attribute = _ATTRIBUTE.search(text)
-            blocks.append({"type": "heading", "level": len(heading.group(1)), "text": text[:attribute.start()].strip() if attribute else text,
-                           "id": attribute.group(1) if attribute else None})
-            continue
-        if not line or line.startswith(("#", "|", "<!--")) or provenance._FOOTNOTE.match(line):
-            flush()
-            continue
-        if line.startswith(">"):
-            line = line.lstrip(">").strip()
-        item = provenance._LIST_ITEM.match(line)
-        if item:
-            flush()
-            line = line[item.end():]
-        current.append(line)
-    flush()
-    return blocks
 
 
 # --- what a locator holds -------------------------------------------------------------------------------------------
@@ -229,11 +169,14 @@ def reading_view(project):
         text = paper._STAMP.sub("", held, count=1)
         number = 0
         under = {}
-        for block in walk(text):
+        for block in provenance.prose_blocks(text):
             if block["type"] == "heading":
+                attribute = _ATTRIBUTE.search(block["text"])
+                identifier = attribute.group(1) if attribute else None
                 under = {level: value for level, value in under.items() if level < block["level"]}
-                under[block["level"]] = block["id"]
-                blocks.append(dict(block, part=part))
+                under[block["level"]] = identifier
+                blocks.append({"type": "heading", "part": part, "level": block["level"], "id": identifier,
+                               "text": plain(block["text"][:attribute.start()] if attribute else block["text"])})
             elif block["type"] == "code":
                 blocks.append(dict(block, part=part))
             else:
@@ -277,7 +220,8 @@ class _Context:
         self.marks = {str(answer.get("ref") or "").partition(":")[2]: answer.get("mark")
                       for answer in record.get("answers") or [] if str(answer.get("ref") or "").startswith("reference:")}
         self._results = None
-        self._sources = None
+        self._owner_hashes = None
+        self._passages = None
         self._written = None
         self._verdicts = None
 
@@ -338,7 +282,8 @@ class _Context:
         return list(self.results()[1].get(result) or []) if result else []
 
     def written(self):
-        """Every current finding and every passage that could stand behind a sentence: `(item, its tags, its hashes)`."""
+        """Every current finding and every passage that could stand behind a sentence: `(item, its tags, its hashes, its
+        text as written)`, the item what the panel shows."""
         if self._written is None:
             from wayline import sections
             items = []
@@ -352,8 +297,8 @@ class _Context:
                                "ticket": finding.get("ticket"), "run": run.group(1) if run else None,
                                "result": self.results()[0].get(finding.get("id")),
                                "objectives": list(finding.get("objectives") or []), "negative": bool(finding.get("negative"))},
-                              tags, hashes))
-            passages = self._guard("passages.jsonl", lambda: sections.read_passages(self.book), [])
+                              tags, hashes, str(finding.get("text") or "")))
+            passages = self.passages()
             replaced = {item.get("replaces") for item in passages if item.get("replaces")}
             for passage in passages:
                 if passage.get("withdrawn") or passage.get("id") in replaced or sections.is_reason(passage):
@@ -363,7 +308,7 @@ class _Context:
                 hashes = {provenance.sentence_hash(sentence.text) for sentence in provenance.prose_sentences(text)}
                 items.append(({"kind": "passage", "id": passage.get("id"), "text": plain(text), "by": passage.get("by"),
                                "section": passage.get("section"), "heading": passage.get("heading"), "ticket": passage.get("ticket"),
-                               "run": None, "result": None, "objectives": list(passage.get("objectives") or [])}, tags, hashes))
+                               "run": None, "result": None, "objectives": list(passage.get("objectives") or [])}, tags, hashes, text))
             self._written = items
         return self._written
 
@@ -371,20 +316,25 @@ class _Context:
         """The findings and passages a sentence was written from: those holding its words, else those sharing the most
         of its tags (a `doc` tag says where an inherited claim came from, not what it was written from)."""
         digest = provenance.sentence_hash(found.text)
-        same = [item for item, _, hashes in self.written() if digest in hashes]
+        same = [item for item, _, hashes, _ in self.written() if digest in hashes]
         if same:
             return same
         tags = {tag for tag in found.tags if not tag.startswith("doc:")}
         if not tags:
             return []
-        shared = [(len(tags & held), item) for item, held, _ in self.written()]
+        shared = [(len(tags & held), item) for item, held, _, _ in self.written()]
         best = max((count for count, _ in shared), default=0)
         return [item for count, item in shared if count and count == best][:3]
 
     # --- checks ---
 
     def verdicts(self):
-        """`({subject: its latest claim verdict}, {sentence digest: [its latest numbers_match verdicts]})`."""
+        """`({subject: its latest claim verdict}, {sentence digest: [its latest numbers_match verdicts]})`.
+
+        A `numbers_match` verdict's subject names its finding's sentence by a digest of its text, tags and all
+        (`numbers.judge`); each current finding's sentences are read once more so a paper sentence with that
+        sentence's words, its tags reordered or trimmed, is found by its words as well (`sentence_hash`).
+        """
         if self._verdicts is None:
             latest = {}
             for event in self.events:
@@ -393,9 +343,18 @@ class _Context:
                     latest[payload.get("subject")] = dict(payload, ticket=event.get("ticket"), ts=event.get("ts"))
             by_digest = {}
             for subject, payload in latest.items():
-                head, mark, digest = str(subject).rpartition("#numbers-")
+                _, mark, digest = str(subject).rpartition("#numbers-")
                 if mark and payload.get("verdict_type") == "numbers_match":
                     by_digest.setdefault(digest, []).append(payload)
+            for item, _, _, text in self.written():
+                if item["kind"] != "finding":
+                    continue
+                for sentence in provenance.prose_sentences(text):
+                    held = by_digest.get(_digest(sentence.text))
+                    if held:
+                        by_digest.setdefault(provenance.sentence_hash(sentence.text), [])
+                        by_digest[provenance.sentence_hash(sentence.text)] += [one for one in held
+                                                                                if one not in by_digest[provenance.sentence_hash(sentence.text)]]
             self._verdicts = (latest, by_digest)
         return self._verdicts
 
@@ -410,7 +369,9 @@ class _Context:
             payload = latest.get(provenance.claim_subject(claim, document))
             if payload is not None:
                 shown.append(_verdict_check("claim verdict", payload))
-        for payload in by_digest.get(hashlib.sha256(found.text.encode("utf-8")).hexdigest()[:16], []):
+        judged = list(by_digest.get(_digest(found.text), []))
+        judged += [one for one in by_digest.get(provenance.sentence_hash(found.text), []) if one not in judged]
+        for payload in judged:
             shown.append(_verdict_check("numbers check", payload))
         quoted = builds._plain(found.text)
         if quoted:
@@ -424,15 +385,20 @@ class _Context:
                                           "session_id": gate.get("session_id"), "findings": [], "verdict_type": gate.get("gate")})
         return shown
 
+    def passages(self):
+        if self._passages is None:
+            from wayline import sections
+            self._passages = self._guard("passages.jsonl", lambda: sections.read_passages(self.book), [])
+        return self._passages
+
     def owners(self):
         """The hashes of the sentences of the owner's own passages: a paper sentence with their words is the owner's."""
-        if self._sources is None:
+        if self._owner_hashes is None:
             from wayline import sections
-            passages = self._guard("passages.jsonl", lambda: sections.read_passages(self.book), [])
-            self._sources = {provenance.sentence_hash(sentence.text) for passage in passages
-                             if passage.get("by") == sections.OWNER and not passage.get("withdrawn")
-                             for sentence in provenance.prose_sentences(passage.get("text"))}
-        return self._sources
+            self._owner_hashes = {provenance.sentence_hash(sentence.text) for passage in self.passages()
+                                  if passage.get("by") == sections.OWNER and not passage.get("withdrawn")
+                                  for sentence in provenance.prose_sentences(passage.get("text"))}
+        return self._owner_hashes
 
     def source(self, found, tags):
         digest = provenance.sentence_hash(found.text)
@@ -578,10 +544,9 @@ class _Context:
                 if isinstance(item, dict) and _OBJECTIVE_ID.match(str(item.get("id")))]
 
 
-GATE_NAMES = {"kill_argument": "the kill argument", "paper_read": "the independent read", "sampled_verdicts": "the sampled verdicts"}
-WEB_IMAGES = (".png", ".svg", ".jpg", ".jpeg")  # what a browser draws; a figure's PDF is the compilation's
-_RESULT_ID = re.compile(r"^R[1-9][0-9]*$")
-_OBJECTIVE_ID = re.compile(r"^O[1-9][0-9]*$")
+def _digest(text):
+    """The digest a `numbers_match` verdict names its sentence by (`numbers.judge`)."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 def _unique(values):
@@ -594,10 +559,8 @@ def _unique(values):
 
 
 def _quotes(point, quoted):
-    """Whether a gate's point quotes a sentence: all of it, or enough of it to name it."""
-    if quoted in point:
-        return True
-    return len(quoted) > QUOTED_MIN and quoted[:QUOTED_MIN * 2] in point if len(quoted) > QUOTED_MIN * 2 else False
+    """Whether a gate's point quotes a sentence: all of it, or, for a longer one, its first `QUOTED_MIN` characters."""
+    return quoted in point or (len(quoted) > QUOTED_MIN and quoted[:QUOTED_MIN] in point)
 
 
 def _verdict_check(name, payload):
@@ -635,16 +598,42 @@ def read_item(project, identifier):
 def snapshot(project):
     """What the view reads outside the ledger's snapshot: the paper's files (`dashboard_views.paper_snapshot` without
     its minute) and each figure role's result the record names."""
+    from wayline import figure_role
     from wayline.dashboard_views import _stamps, paper_snapshot
     project = Path(project)
     found = dict(paper_snapshot(project))
+
+    def stamp(path, key):
+        try:
+            held = path.stat()
+        except OSError:
+            return
+        found[key] = (held.st_mtime_ns, held.st_size)
+
     found.pop("minute", None)
-    for directory in (project / PAPER_DIR / "figures").glob("F*"):
+    for directory in sorted((project / PAPER_DIR / "figures").glob("F*")):
         found.update(_stamps(directory, "figures/%s/" % directory.name))
     try:
         record = paper.read_record(project) or {}
     except paper.PaperError:
         record = {}
     for entry in ((record.get("figures") or {}).get("figures") or []):
-        found.update(_stamps(project / "figures" / str(entry.get("figure_id")), "role/%s/" % entry.get("figure_id")))
+        found.update(_stamps(project / figure_role.FIGURES / str(entry.get("figure_id")), "role/%s/" % entry.get("figure_id")))
+    # What a sentence's class and its held values read beside the ledger: the claim classes, each cited work's
+    # dossier, and every file a tag of the main text names.
+    stamp(project / RESEARCH / provenance.CLAIMS_CACHE, "claims")
+    try:
+        refs = sorted((project / RESEARCH / "refs").iterdir())
+    except OSError:
+        refs = []
+    for folder in refs:
+        stamp(folder / "dossier.json", "refs/%s" % folder.name)
+    for part in PARTS:
+        for kind, rest in provenance.ANY_TAG_RE.findall(_part_file(project, part) or ""):
+            _, parts = provenance.parse_tag("%s:%s" % (kind, rest))
+            if kind == "res" and parts:
+                stamp(project / parts["artifact"], "file/" + parts["artifact"])
+            elif kind == "code" and parts:
+                path = parts["path"] if parts["path"].startswith(provenance.CODE_DIR + "/") else "%s/%s" % (provenance.CODE_DIR, parts["path"])
+                stamp(project / path, "file/" + path)
     return found

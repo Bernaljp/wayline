@@ -45,7 +45,7 @@ __all__ = [
     "commit_threshold_bytes", "oversized_tracked_files",
     "TAG_RE", "RES_TAG_RE", "REF_TAG_RE", "REF_IDENTIFIER_TAG_RE", "Sentence", "sentences", "parse_tag", "ref_slug", "identifier_index", "strip_tags",
     "REPORT", "CLAIMS_CACHE", "SECTIONS", "SENTENCE_CLASSES", "RECORDS_BEGIN", "RECORDS_END",
-    "UsageLimited", "Lint", "Claim", "Rendered", "prose_sentences", "sentence_hash", "render_citations", "restore_tags",
+    "UsageLimited", "Lint", "Claim", "Rendered", "prose_blocks", "prose_sentences", "sentence_hash", "render_citations", "restore_tags",
     "read_claims_cache", "classify", "lint", "lint_report", "tagged_claims", "sample_size", "sample_claims",
     "claim_subject", "claim_paths", "verify_claims", "report_evidence", "finding_tags", "finding_text", "finding_line",
     "tagged_text", "render_report", "report_command",
@@ -536,28 +536,36 @@ _CITATION = re.compile(r"\[\^(\d+)\](?!:)")
 _LIST_ITEM = re.compile(r"^(?:[-*+]|\d+[.)])\s+")
 _FENCE = re.compile(r"^(`{3,}|~{3,})")
 _RUN_TICKET = re.compile(r"^t([0-9]+)-a[0-9]+$")
+_HEADING_LINE = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 
 
-def prose_sentences(markdown):
-    """The prose of a markdown document as `Sentence`s: what the classifier reads and the linter checks.
+def prose_blocks(markdown):
+    """A markdown document as the blocks its prose comes in: `{"type": "paragraph", "sentences": [Sentence]}` for a
+    paragraph, a list item, or a block quote, `{"type": "heading", "level", "text"}`, and `{"type": "code", "text"}`.
 
-    Prose is paragraphs, list items, and block quotes. Headings, tables, code blocks, HTML comment
-    lines, footnote definitions, and everything between `RECORDS_BEGIN` and `RECORDS_END` are not.
-    A paragraph's lines are joined before it is split, so a sentence wrapped across lines is one.
+    Prose is paragraphs, list items, and block quotes. Headings, tables, code blocks, HTML comment lines, footnote
+    definitions, and everything between `RECORDS_BEGIN` and `RECORDS_END` are not; a heading and a code block are given
+    as such, for a reader that shows them (the paper's reading view, ticket 141), and the rest is left out. A
+    paragraph's lines are joined before it is split, so a sentence wrapped across lines is one.
     """
-    blocks, current = [], []
+    blocks, current, fenced = [], [], []
     in_records, fence = False, None
 
     def flush():
         if current:
-            blocks.append(" ".join(current))
+            found = sentences(" ".join(current))
+            if found:
+                blocks.append({"type": "paragraph", "sentences": found})
             current.clear()
 
     for raw in str(markdown or "").splitlines():
         line = raw.strip()
         if fence is not None:
             if line.startswith(fence):
-                fence = None
+                blocks.append({"type": "code", "text": "\n".join(fenced)})
+                fence, fenced = None, []
+            else:
+                fenced.append(raw)
             continue
         if in_records:
             if line == RECORDS_END:
@@ -572,6 +580,11 @@ def prose_sentences(markdown):
             flush()
             fence = opened.group(1)
             continue
+        heading = _HEADING_LINE.match(line)
+        if heading:
+            flush()
+            blocks.append({"type": "heading", "level": len(heading.group(1)), "text": heading.group(2)})
+            continue
         if not line or line.startswith(("#", "|", "<!--")) or _FOOTNOTE.match(line):
             flush()
             continue
@@ -583,7 +596,13 @@ def prose_sentences(markdown):
             line = line[item.end():]
         current.append(line)
     flush()
-    return [sentence for block in blocks for sentence in sentences(block)]
+    return blocks
+
+
+def prose_sentences(markdown):
+    """The prose of a markdown document as `Sentence`s, in `prose_blocks`'s order: what the classifier reads and the
+    linter checks."""
+    return [sentence for block in prose_blocks(markdown) if block["type"] == "paragraph" for sentence in block["sentences"]]
 
 
 def sentence_hash(text):
