@@ -19,4 +19,4 @@
 - [x] The GPU-hours reading is one function, monotone over a replayed journal.
 - [x] A proposal that changes no measure or data is not refused as "goal"; covered by the decider's refusal tests.
 - [x] Two jobs whose declared GPU memory fits launch on one card; covered with the fake job runner.
-- [ ] `python -m unittest` passes.
+- [x] `python -m unittest` passes.
