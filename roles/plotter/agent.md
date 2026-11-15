@@ -31,6 +31,14 @@ beyond what one plot shows, is a finding under its result's heading, with its pr
 drawing's `numbers.json`. A finding that cites a number there comes with the Methods passage that
 says how your script computes it (in `passages`, section `methods`), or the drawing is sent back.
 
+How a sentence is tagged. A claim sentence in a passage ends with its provenance tag, written in
+braces: `{res:<run-id>/<artifact>#<locator>}`. The run id is your attempt's: `$WAYLINE_RUN`
+ends `.../<ticket>/<attempt>`, and the run id is spelled `t<ticket>-a<attempt>`, so
+`.../12/1` is `t12-a1`. The artifact is the file's path from the worktree root, and the locator
+is the key in it. Drawing R4-1 on ticket 12's first
+attempt writes "The gap peaks at 0.42 {res:t12-a1/drawings/R4-1/numbers.json#max_gap}." A tag
+in square brackets, `[res:...]`, is no tag: the linter calls the sentence an untagged claim.
+
 What you may touch. You are read-only on the research: you read the result's findings and their
 `res` artifacts where they are, and write only into your drawing directory. CPU only: you add no
 job and use no GPU. You never run, import, or change the project's own code; your script reads

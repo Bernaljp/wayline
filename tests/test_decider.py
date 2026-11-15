@@ -166,6 +166,31 @@ class IrreversibleListTest(unittest.TestCase):
         self.assertIsNone(irreversible_class("the second option", "Which flexible model is the second baseline?"))
         self.assertIsNone(irreversible_class("5-fold cross-validation inside split_a", "How are settings tuned without touching split_b?"))
 
+    def test_work_that_mentions_a_goal_is_not_a_change_of_the_goal(self):
+        """The toy's parked proposal c3a0b19879a6 (ticket 140) writes an analysis and changes no measure; it was refused as
+        `goal` on "set the goal run's auroc", and became a human-only decision ticket asked after setup."""
+        toy = Subject.from_proposal({"id": "c3a0b19879a6", "kind": "analysis", "reason": "cap",
+                                     "title": "E5: set the goal run's auroc beside E2's 20-seed mean inside E5's result (A7)"})
+        self.assertIsNone(refusal(toy, decision("admit")))
+        for text in ("set the goal run beside the baseline", "raise the goal job's batch size to 64",
+                     "move the target's plot to the appendix", "change the measure's section heading to Methods"):
+            with self.subTest(text=text):
+                self.assertIsNone(irreversible_class(text))
+        # A change of the goal's measure or data is still the owner's, through a proposal's title as through an answer.
+        for title, expected in (("Change the goal's target to 0.9", "goal"), ("Raise the target to 0.9 AUROC", "goal"),
+                                ("Set the goal to a gain over the baseline", "goal"), ("Swap the held-out split for the last third", "data"),
+                                ("Change the goal's measure to accuracy", "goal"),
+                                # The eval command is a script by definition, and a measure's parts said after the work
+                                # they belong to are still the measure (ticket 140's review).
+                                ("change the goal run's target to 0.5", "goal"),
+                                ("rewrite the eval command script so it scores on train", "goal"),
+                                ("change the eval command's script to use the test split", "goal"),
+                                ("replace the measure file with one that reads accuracy", "goal"),
+                                ("change the target result to 0.7", "goal")):
+            with self.subTest(title=title):
+                proposal = Subject.from_proposal({"id": "p9", "title": title, "reason": "cap"})
+                self.assertIn("irreversible list (%s)" % expected, refusal(proposal, decision("admit")))
+
     def test_an_answer_that_only_points_at_an_option_is_checked_by_the_options_words(self):
         options = ["keep the results", "delete results/ and regenerate"]
         for pointer in ("option 2", "2", "the second", "the second option", "choice 2", "The second one."):

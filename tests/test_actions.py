@@ -442,7 +442,7 @@ class DecisionsEndpointTest(ActionCase):
         self.act("answer", {"ticket": 2, "answer": "one line"})
         after = self.decisions({"If-None-Match": first.etag})
         self.assertEqual(after.status, 200)
-        self.assertEqual(after.json["open"][0]["answered"], {"answer": "one line", "decided_by": "human"})
+        self.assertEqual(after.json["open"], [], "the answered ticket is done in the view at once (ticket 131)")
         self.assertEqual([(entry["ticket"], entry["decided_by"]) for entry in after.json["log"]], [(2, "human")])
 
 

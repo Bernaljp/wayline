@@ -1361,7 +1361,7 @@ def ended_for_good(project, events, now):
     reason = stopping.rule_end(rule, records, progress) if records is not None else None
     if reason is not None:
         return "the stopping rule %s holds (%s), which only the owner undoes" % (stopping.describe_rule(rule), reason)
-    found = stopping.spent(harness, events, now)
+    found = stopping.spent(harness, events, now, stopping.job_records(project))
     if found:
         return "%s, and only the owner raises a budget (wayline switch --budget)" % stopping.describe_spent(found)
     return None

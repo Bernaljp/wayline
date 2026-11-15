@@ -16,9 +16,11 @@ from tests import machine
 from tests.paths import FIXTURES_DIR
 from tests.projects import ProjectTestCase
 from tests.test_conductor import hold_the_ladder
-from wayline import project, provenance, replay, resources, tickets, worker
+from wayline import project, provenance, replay, resources, stopping, tickets, worker
 from wayline.conductor import Conductor
 from wayline.ledger import Ledger
+from wayline.pacing import epoch
+from wayline.project import read_harness
 from wayline.resources import JobState
 
 SWEEP = FIXTURES_DIR / "projects" / "sweep"
@@ -345,6 +347,54 @@ class ReservationTest(SweepCase):
         self.assertEqual(sorted(self.by_job("job_cancelled")), ["t1-2", "t1-3"])
         self.assertNotIn("job_waiting", self.names())
         self.assertEqual(self.launched, [])
+
+
+class SharedCardTest(SweepCase):
+    """Ticket 140: the toy's sweeps used the RTX 3090 at 0% and 107 MiB each, yet each held the whole card, so twelve
+    jobs ran one at a time. A ticket's jobs that declare the GPU memory they need share a card while their needs fit."""
+
+    def declare(self, gpu_mem_gb):
+        ticket = self.project / "research" / "tickets" / "01-sweep-the-learning-rate.md"
+        text = ticket.read_text(encoding="utf-8")
+        ticket.write_text(text.replace("  ram_gb: 4\n", "  ram_gb: 4\n  gpu_mem_gb: %s\n" % gpu_mem_gb, 1), encoding="utf-8")
+
+    def launched_together(self):
+        """The jobs launched before any job had ended."""
+        together = []
+        for event in self.events():
+            if event["event"] in ("job_finished", "job_failed", "job_retried"):
+                break
+            if event["event"] == "job_launched":
+                together.append(event["job"])
+        return together
+
+    def test_jobs_whose_declared_gpu_memory_fits_launch_on_one_card(self):
+        self.declare(2)
+        self.run_sweep()
+        self.assertEqual(self.launched_together(), ["t1-1", "t1-2", "t1-3"])
+        for spec, indices in self.launched:
+            self.assertEqual((indices, spec.gpu_uuids), ((0,), (machine.GPU_UUID,)))
+        self.assertEqual({(self.job(job)["devices"]["gpu_mem_gb"], self.job(job)["devices"]["gpu_total_gb"]) for job in RATES},
+                         {(2, 24)}, "the declaration and the card's total, which the GPU hours read the share from")
+        files = stopping.job_records(self.project)
+        whole = {job: dict(record, devices={key: value for key, value in record["devices"].items() if key != "gpu_mem_gb"})
+                 for job, record in files.items()}
+        now = epoch(self.events()[-1]["ts"])
+        self.assertAlmostEqual(stopping.gpu_hours(self.events(), now, files), stopping.gpu_hours(self.events(), now, whole) * 2 / 24)
+        self.assertEqual(project.stopping_view(read_harness(self.project), self.events(), now, files)["budgets"]["gpu_hours"]["used"],
+                         round(stopping.gpu_hours(self.events(), now, files), 2))
+        self.assertEqual(project.read_jobs(self.project)[1], [], "every job file validates")
+        self.assertNotIn("job_waiting", self.names())
+        self.assertEqual(self.by_job("job_retried")["t1-3"][0]["oom"], "gpu", "the OOM ladder stands on a shared card")
+        self.assertEqual((self.status(1), self.status(2)), ("done", "done"))
+
+    def test_jobs_whose_needs_do_not_fit_together_wait_for_the_card(self):
+        self.declare(10)  # two fit in the card's 24 GB, a third does not
+        self.run_sweep()
+        self.assertEqual(self.launched_together(), ["t1-1", "t1-2"])
+        self.assertEqual([payload["reason"] for payload in self.by_job("job_waiting")["t1-3"]],
+                         ["needs 1 GPU(s) with 10 GB of GPU memory and 0 of 1 has it free"])
+        self.assertEqual((self.status(1), self.status(2)), ("done", "done"))
 
 
 class RestartTest(SweepCase):

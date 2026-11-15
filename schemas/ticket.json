@@ -22,6 +22,7 @@
         "gpu": {"type": "integer", "minimum": 0},
         "cpu": {"type": "integer", "minimum": 1},
         "ram_gb": {"type": "number", "minimum": 0},
+        "gpu_mem_gb": {"type": "number", "minimum": 0, "description": "the GPU memory one job needs: jobs that declare it share a card while their needs fit; a job without it takes its GPUs whole (ticket 140)"},
         "wallclock_minutes": {"type": "integer", "minimum": 1}
       }
     },
