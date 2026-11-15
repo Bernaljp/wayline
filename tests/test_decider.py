@@ -329,6 +329,14 @@ class DecideRestTest(RecordedGrillCase):
         self.assertEqual([entry["id"] for entry in log[:2]], ["Q8", "Q10"])
         self.assertTrue(all(entry["decided_by"] == "human" for entry in log[2:]))
 
+    def test_the_launch_line_starts_no_mcp_server_of_the_owners(self):
+        """Ticket 130: only the servers of an empty `--mcp-config`, so none of the owner's user or plugin servers."""
+        self.decide_rest(Q8=decision(Q8_ANSWER), Q10=decision(Q10_ANSWER))
+        for call in self.decider_calls():
+            argv = worker.build_argv(call.request, call.run_dir)
+            self.assertIn("--strict-mcp-config", argv)
+            self.assertEqual(json.loads(argv[argv.index("--mcp-config") + 1]), {"mcpServers": {}})
+
     def test_the_launch_is_opus_at_max_effort_with_the_decision_schema_and_the_records_in_its_prompt(self):
         self.decide_rest(Q8=decision(Q8_ANSWER), Q10=decision(Q10_ANSWER))
         calls = self.decider_calls()

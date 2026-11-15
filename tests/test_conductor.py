@@ -293,6 +293,12 @@ class LaunchTest(ConductorCase):
         self.assertEqual(sorted(Path(command).name for command in commands), ["command_guard.sh", "stop_guard.sh", "touch_set_guard.sh"])
         self.assertTrue(all(command.startswith(str(HARNESS_ROOT)) for command in commands))
 
+    def test_the_launch_line_starts_no_mcp_server_of_the_owners(self):
+        """Ticket 130: only the servers of an empty `--mcp-config`, so none of the owner's user or plugin servers."""
+        argv = worker.build_argv(self.call.request, self.call.run_dir)
+        self.assertIn("--strict-mcp-config", argv)
+        self.assertEqual(json.loads(argv[argv.index("--mcp-config") + 1]), {"mcpServers": {}})
+
     def test_both_directories_of_the_launch_line_are_added(self):
         self.assertEqual(self.call.request.add_dirs, [str(HARNESS_ROOT), str(self.project)])
 

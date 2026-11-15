@@ -190,6 +190,7 @@ class ArgvTest(unittest.TestCase):
             "--permission-mode", "dontAsk", "--permission-prompts", "none",
             "--allowedTools", "Read", "Bash(git status*)",
             "--disallowedTools", "WebFetch", "WebSearch",
+            "--strict-mcp-config", "--mcp-config", '{"mcpServers": {}}',
             "--settings", "/proj/research/sessions/3/1/settings.json",
             "--add-dir", "/harness", "--add-dir", "/project",
             "--output-format", "stream-json", "--verbose",
@@ -279,7 +280,8 @@ class ArgvTest(unittest.TestCase):
         expected_tail = [arg if arg != "/proj/research/sessions/3/1/settings.json" else "/proj/research/sessions/3/1/resume-1/settings.json" for arg in launch[3:]]
         self.assertEqual(resume[5:], expected_tail)
         for flag in ["--agents", "--settings", "--permission-mode", "--permission-prompts", "--allowedTools",
-                     "--disallowedTools", "--add-dir", "--fallback-model", "--output-format", "--json-schema"]:
+                     "--disallowedTools", "--strict-mcp-config", "--mcp-config", "--add-dir", "--fallback-model",
+                     "--output-format", "--json-schema"]:
             self.assertIn(flag, resume)
         with self.assertRaises(worker.LaunchError):
             worker.build_argv(request, run, session_id="83508b6e", message="  ")

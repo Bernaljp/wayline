@@ -75,7 +75,14 @@ TERM_GRACE_SECONDS = 15  # after SIGTERM on a timeout, before SIGKILL
 # which `claude -p` reads when no prompt argument is given (ticket 36: a specify redraft of 144 KB was refused).
 # So does a prompt that begins with `-`, which the CLI would parse as an option (the M5 run's dedup judge).
 PROMPT_ARG_MAX = 100_000
-USAGE_ARGV = ("-p", "/usage", "--output-format", "json", "--no-session-persistence")  # decision 5; research-notes/02 launch 4
+# No MCP server of the owner's (ticket 130; decisions 4 and 7). Without these the CLI starts every user-level and
+# plugin MCP server at each launch, which `--disallowedTools mcp__*` refuses the tools of but does not stop starting:
+# on the M8 toy run every session spawned `codex mcp-server`, the `llm-chat` server, and `npx @playwright/mcp@latest`.
+# `--strict-mcp-config` reads MCP servers only from `--mcp-config`, and the config given names none
+# (docs/verification/m8.md, "Harness sessions without the owner's MCP servers").
+NO_MCP_ARGV = ("--strict-mcp-config", "--mcp-config", '{"mcpServers": {}}')
+USAGE_ARGV = ("-p", "/usage", "--output-format", "json", "--no-session-persistence",  # decision 5; research-notes/02 launch 4
+              *NO_MCP_ARGV)
 USAGE_TIMEOUT_S = 60
 AUTH_STATUS_ARGV = ("auth", "status", "--json")  # decision 7, the tick's login check; research-notes/02: exit 0 when logged in
 AUTH_STATUS_TIMEOUT_S = 30
@@ -1260,6 +1267,7 @@ def build_argv(request, run_dir, session_id=None, message=None):
         argv += ["--allowedTools", *[str(tool) for tool in request.allowed_tools]]
     if request.disallowed_tools:
         argv += ["--disallowedTools", *[str(tool) for tool in request.disallowed_tools]]
+    argv += list(NO_MCP_ARGV)
     argv += ["--settings", str(run_dir / "settings.json")]
     for directory in request.add_dirs:
         argv += ["--add-dir", str(directory)]

@@ -384,7 +384,9 @@ class LauncherCliTest(StandInMixin, unittest.TestCase):
         reply.write_text(json.dumps({"type": "result", "subtype": "success", "num_turns": 0, "result": USAGE_TEXT}) + "\n", encoding="utf-8")
         os.environ["FAKE_CLAUDE_STREAM"] = str(reply)
         self.assertEqual(worker.usage(), USAGE_TEXT)
-        self.assertEqual(self.recorded()["argv"], ["-p", "/usage", "--output-format", "json", "--no-session-persistence"])
+        # Ticket 130: the usage reading starts none of the owner's MCP servers either, every tick.
+        self.assertEqual(self.recorded()["argv"], ["-p", "/usage", "--output-format", "json", "--no-session-persistence",
+                                                   "--strict-mcp-config", "--mcp-config", '{"mcpServers": {}}'])
 
     def test_usage_that_prints_no_json_is_a_launch_error(self):
         os.environ["FAKE_CLAUDE_STREAM"] = str(STREAMS / "README.md")
