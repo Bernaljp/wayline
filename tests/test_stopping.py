@@ -15,7 +15,7 @@ from wayline import cli, stopping
 from wayline.jsonschema import check, load_schema
 from wayline.ledger import Ledger, make_event
 from wayline.pacing import epoch
-from wayline.project import ProjectError, init_project, read_harness
+from wayline.project import ProjectError, init_project, read_harness, stopping_view
 
 
 def objective(identifier, status="open", target=None, metric=None):
@@ -107,6 +107,32 @@ class BudgetTest(ProjectTestCase):
         ]
         # j1: 1.5 h on two GPUs; j2: 0.5 h on one; j3: none held; j4: still running, 1 h so far on one.
         self.assertAlmostEqual(stopping.gpu_hours(events, at("2026-10-01T13:00:00Z")), 3.0 + 0.5 + 1.0)
+
+    def test_the_gpu_hours_never_go_down_over_a_replayed_journal(self):
+        """The toy's night (ticket 140): status read 1.8 GPU hours, then 1.3, then 1.45. A job's `job_finished` came
+        long after its process had ended, and its `seconds` replaced the hours counted to now while it ran. Read at
+        every event and a second before the next, as the status and the budget read it, the hours only grow."""
+        gpu = ["GPU-0095fb8d-af69-ff0f-6b06-da1a9a89fc7f"]
+        events = [  # the toy's first two sweep members, as its journal holds them, and a CPU job beside them
+            event("job_launched", {"ticket": 16, "gpu_uuids": gpu}, "2026-10-24T13:14:52.673Z", job="t16-1"),
+            event("job_finished", {"exit_code": 0, "seconds": 863, "outputs_ok": True}, "2026-10-24T13:29:15.295Z", job="t16-1"),
+            event("job_launched", {"ticket": 16, "gpu_uuids": gpu}, "2026-10-24T13:33:42.609Z", job="t16-2"),
+            event("job_launched", {"ticket": 102, "gpu_uuids": []}, "2026-10-24T13:40:00.000Z", job="t102-1"),
+            event("job_finished", {"exit_code": 0, "seconds": 741, "outputs_ok": True}, "2026-10-24T13:58:09.148Z", job="t16-2"),
+            event("job_finished", {"exit_code": 0, "seconds": 692, "outputs_ok": True}, "2026-10-24T14:00:00.000Z", job="t102-1"),
+        ]
+        harness = {"budgets": {"gpu_hours": 4}}
+        readings = []
+        for count, record in enumerate(events, start=1):
+            following = events[count]["ts"] if count < len(events) else "2026-10-24T15:00:00.000Z"
+            for now in (at(record["ts"]), at(following) - 1):
+                used = stopping.gpu_hours(events[:count], now)
+                self.assertEqual(stopping_view(harness, events[:count], now)["budgets"]["gpu_hours"]["used"], round(used, 2),
+                                 "status reads the one function")
+                readings.append(used)
+        self.assertEqual(readings, sorted(readings), "a spent budget never goes down")
+        # Each GPU job counts from its launch to its end as the journal has them: 14m22.6s and 24m26.5s on one GPU.
+        self.assertAlmostEqual(readings[-1], (862.622 + 1466.539) / 3600.0, places=6)
 
     def test_a_budget_is_spent_at_its_limit_and_none_is_no_limit(self):
         events = [event("run_started", {"resume": False, "harness_tag": "v1.1.0", "autonomy": "autonomous", "radius": "moderate",

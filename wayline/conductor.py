@@ -3642,7 +3642,9 @@ class Conductor:
                 continue  # its ticket failed a moment ago, and the job was cancelled with it
             record = dict(by_id[placement.job], devices={
                 "gpu_uuids": list(placement.gpu_uuids), "gpu_indices": list(placement.gpu_indices),
-                "cores": list(placement.cores), "ram_gb": placement.ram_gb})
+                "cores": list(placement.cores), "ram_gb": placement.ram_gb,
+                # The GPU memory it declared (ticket 140): the next placement reads its card as shared, not held whole.
+                **({"gpu_mem_gb": placement.gpu_mem_gb} if placement.gpu_mem_gb is not None else {})})
             if self._launch_job(record, resources.effective_overrides(record), {}, placement.gpu_indices) is not None:
                 self.say("  job %s (ticket %d) launched on %s, cores %s" % (
                     placement.job, record["ticket"], "GPU %s" % ",".join(map(str, placement.gpu_indices)) if placement.gpu_indices else "no GPU",

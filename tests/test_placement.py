@@ -107,9 +107,62 @@ class PlaceJobsTest(unittest.TestCase):
 
     def test_the_request_is_the_job_files_where_it_names_devices_and_the_tickets_otherwise(self):
         resources_ = {"gpu": 1, "cpu": 6, "ram_gb": 16}
-        self.assertEqual(job_request(pending("a"), resources_), {"gpu": 1, "cpu": 6, "ram_gb": 16.0})
-        self.assertEqual(job_request(pending("a", cores=[9, 10], ram_gb=2), resources_), {"gpu": 1, "cpu": 2, "ram_gb": 2.0})
-        self.assertEqual(job_request(pending("a"), None), {"gpu": 0, "cpu": 1, "ram_gb": 0.0})
+        self.assertEqual(job_request(pending("a"), resources_), {"gpu": 1, "cpu": 6, "ram_gb": 16.0, "gpu_mem_gb": None})
+        self.assertEqual(job_request(pending("a", cores=[9, 10], ram_gb=2), resources_),
+                         {"gpu": 1, "cpu": 2, "ram_gb": 2.0, "gpu_mem_gb": None})
+        self.assertEqual(job_request(pending("a"), None), {"gpu": 0, "cpu": 1, "ram_gb": 0.0, "gpu_mem_gb": None})
+        self.assertEqual(job_request(pending("a"), dict(resources_, gpu_mem_gb=0.5))["gpu_mem_gb"], 0.5)
+        self.assertIsNone(job_request(pending("a"), dict(resources_, gpu_mem_gb=0))["gpu_mem_gb"], "0 declares nothing")
+
+
+def shared(job_id, gpu_mem_gb, cores=(8,)):
+    record = running(job_id, gpu_indices=[0], cores=cores)
+    record["devices"]["gpu_mem_gb"] = gpu_mem_gb
+    return record
+
+
+class SharedCardTest(unittest.TestCase):
+    """Ticket 140: jobs that declare the GPU memory they need share a card; a job that declares none takes it whole."""
+
+    LIGHT = dict(GPU_JOB, gpu_mem_gb=1)
+
+    def test_declaring_jobs_share_a_card_while_their_declared_memory_fits(self):
+        jobs = [pending("a"), pending("b"), pending("c")]
+        placed, waiting = place(jobs, {"a": self.LIGHT, "b": self.LIGHT, "c": dict(GPU_JOB, gpu_mem_gb=22)})
+        self.assertEqual([(item.job, item.gpu_indices, item.gpu_mem_gb) for item in placed], [("a", (0,), 1), ("b", (0,), 1)])
+        self.assertEqual(waiting, {"c": "needs 1 GPU(s) with 22 GB of GPU memory and 0 of 1 has it free"},
+                         "1 + 1 + 22 GB is more than the card's 24")
+
+    def test_a_card_held_whole_takes_no_declaring_job_and_a_shared_card_takes_no_whole_one(self):
+        self.assertIn("a", place([pending("a")], {"a": self.LIGHT}, running_jobs=[running("r", gpu_indices=[0], cores=[8])])[1])
+        self.assertIn("a", place([pending("a")], {"a": GPU_JOB}, running_jobs=[shared("r", 1)])[1])
+        placed, _ = place([pending("a")], {"a": self.LIGHT}, running_jobs=[shared("r", 1)])
+        self.assertEqual(placed[0].gpu_indices, (0,))
+        placed, waiting = place([pending("a"), pending("b")], {"a": GPU_JOB, "b": self.LIGHT})
+        self.assertEqual(([item.job for item in placed], list(waiting)), (["a"], ["b"]), "the whole job placed first holds it")
+
+    def test_the_free_memory_read_covers_the_jobs_placed_in_this_call(self):
+        readings = machine.recorded()
+        for sample in readings["gpus"]:
+            sample[0].update(memory_free_mib=3000)
+        placed, waiting = place([pending("a"), pending("b")], {"a": dict(GPU_JOB, gpu_mem_gb=2), "b": dict(GPU_JOB, gpu_mem_gb=2)},
+                                readings=readings)
+        self.assertEqual(([item.job for item in placed], list(waiting)), (["a"], ["b"]), "2 + 2 GB is more than the 2.9 GB read free")
+
+    def test_more_gpu_memory_than_any_card_holds_can_never_be_placed(self):
+        self.assertEqual(resources.never_fits(dict(GPU_JOB, gpu_mem_gb=30), machine.recorded()),
+                         "it asks for 30 GB of GPU memory and the largest GPU here has 24 GB")
+        self.assertIsNone(resources.never_fits(dict(GPU_JOB, gpu_mem_gb=20), machine.recorded()))
+
+    def test_a_reserved_or_busy_card_is_never_shared(self):
+        reserved = machine.recorded()
+        reserved["reservation"] = Reservation(gpu_indices=frozenset([0]), cores=frozenset(range(8)))
+        self.assertIn("a", place([pending("a")], {"a": self.LIGHT}, readings=reserved)[1])
+        self.assertIn("a", place([pending("a")], {"a": self.LIGHT}, readings=machine.recorded(utilization=55))[1])
+        owner = machine.recorded()
+        owner["reservation"] = Reservation(cores=frozenset(range(8)), extra_gpu_mib=23000)
+        self.assertIn("a", place([pending("a")], {"a": dict(GPU_JOB, gpu_mem_gb=2)}, readings=owner, running_jobs=[shared("r", 1)])[1],
+                      "the owner's processes' GPU memory counts against the card's total")
 
 
 class OverridesTest(unittest.TestCase):

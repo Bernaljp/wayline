@@ -146,7 +146,12 @@ def wallclock_hours(events, now):
 
 
 def gpu_hours(events, now):
-    """Each job's hours times the GPUs it held: from its `job_launched` to its end, or to `now` while it runs."""
+    """Each job's hours times the GPUs it held: from its `job_launched` to its end, or to `now` while it runs.
+
+    The one reading of the GPU budget (`status`, the account, the run's end), and it never goes down (ticket 140): both
+    ends are the journal's timestamps, never a `job_finished`'s `seconds`, which counts the process alone and so took
+    back the hours a job had been read at while the conductor had not yet noticed it end.
+    """
     total, live = 0.0, {}
     for event in events:
         name, payload = event.get("event"), event.get("payload") or {}
@@ -159,12 +164,7 @@ def gpu_hours(events, now):
             gpus = payload.get("gpu_uuids") or []
             live[job] = (epoch(event.get("ts")), len(gpus) if isinstance(gpus, list) else 0)
         elif name in _JOB_ENDS and job in live:
-            started, count = live.pop(job)
-            seconds = payload.get("seconds") if name == JOB_FINISHED else None
-            if _number(seconds):
-                total += max(0.0, seconds) / 3600.0 * count
-            else:
-                total += _held((started, count), epoch(event.get("ts")))
+            total += _held(live.pop(job), epoch(event.get("ts")))
     for started, count in live.values():
         total += _held((started, count), now)
     return total

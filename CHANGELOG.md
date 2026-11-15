@@ -33,6 +33,19 @@ refuses a project made before it, which keeps its old tag or starts again on the
 project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
 lists it read-only, marked with its tag.
 
+- Four small things the toy run showed (ticket 140). The general report's `report_rendered` counts its claims when it
+  renders offline, as the conductor and the tick do: a sentence the classifier has not read that ends with a tag other
+  than `doc` counts as a claim and a tagged one (the toy's night journaled `claims: 0` for 175 tagged findings). The
+  GPU hours (`stopping.gpu_hours`, which `status`, the account, and the budget read) count each job from its
+  `job_launched` to its end as the journal holds them, never a `job_finished`'s `seconds`, so the reading never goes
+  down (it read 1.8, then 1.3, then 1.45); a job counts until the conductor journals its end. The decider's "goal"
+  class no longer catches work that names a goal ("set the goal run's auroc beside E2's mean", which became a
+  human-only decision ticket): a goal or measure word naming the run, result, plot, or file it belongs to is not the
+  change's object. And a ticket's `resources.gpu_mem_gb` declares the GPU memory one job needs: jobs that declare it
+  share a card while every declared need on it fits the card's total over the reservation's and the memory read free
+  covers the jobs placed in the same wave, under the utilization rule and the OOM ladder as they stand; the job file
+  records it in `devices.gpu_mem_gb`, a job that declares none still takes its GPUs whole, and a declaration larger
+  than any card fails the ticket at once.
 - The public showcase (`showcase/`): the dashboard over the M8 toy run as a static site on GitHub Pages, and the
   repository under the MIT license (`LICENSE`), with a `README.md` for a reader new to wayline. `python3 -m
   showcase.build <out>` serves a snapshot of the run (`showcase/toy.tar.xz`: what the views read, the paper, the plots

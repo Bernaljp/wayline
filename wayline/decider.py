@@ -123,12 +123,16 @@ IRREVERSIBLE = (
      r"|paid (?:tier|plan|api|account)|credit card|rent(?:s|ing)? (?:a |an |the |more )?(?:gpus?|instances?|servers?|machines?)"
      r"|cloud (?:instances?|credits))\b"),
     # Decision 17 (ticket 91): changing a goal's measure; adding, answering, parking, dropping, reframing, and reopening an
-    # objective left the list, so "drop the goal" and "a new goal" are not caught.
+    # objective left the list, so "drop the goal" and "a new goal" are not caught. Work that only names a goal is not a
+    # change of it (ticket 140): "set the goal run's auroc beside E2's mean" sets a run's number, so a goal or a measure
+    # word that names the work it belongs to (the goal run, the target's plot) is not the change's object.
     ("goal",
      r"\b((?:chang(?:e|es|ing)|replac(?:e|es|ing)|redefin(?:e|es|ing)|relax(?:es|ing)?|lower(?:s|ing)?|rais(?:e|es|ing)"
      r"|swap(?:s|ping)?|revis(?:e|es|ing)|rewrit(?:e|es|ing)|switch(?:es|ing)?|set(?:s|ting)?|mov(?:e|es|ing)|loosen(?:s|ing)?|tighten(?:s|ing)?)"
      r" (?:the |our |its |a |an )?(?:new )?(?:goal|measure|target|success criteri(?:on|a)|primary metric|goal metric|eval(?:uation)? command)"
+     r"(?!(?:'s|’s)?\s+(?:run|job|ticket|result|finding|section|heading|plot|table|figure|report|file|key|script|log)s?\b)"
      r"|drop(?:s|ping)? (?:the |our |its |a |an )?(?:goal's )?(?:measure|target|success criteri(?:on|a)|primary metric|goal metric|eval(?:uation)? command)"
+     r"(?!(?:'s|’s)?\s+(?:run|job|ticket|result|finding|section|heading|plot|table|figure|report|file|key|script|log)s?\b)"
      r"|the goal becomes|a new target)\b"),
     ("data",
      r"\b((?:chang(?:e|es|ing)|replac(?:e|es|ing)|swap(?:s|ping)?|drop(?:s|ping)?|re-?split(?:s|ting)?|redefin(?:e|es|ing)|regenerat(?:e|es|ing)"

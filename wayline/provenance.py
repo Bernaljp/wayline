@@ -726,8 +726,9 @@ class Lint:
     """What the linter found in one document: whether it passes, the counts, every problem, and what it lists.
 
     A problem is `{sentence, problem, tag, detail}`, `problem` one of the kinds above, with `passage` naming the
-    passage it is in when the linter read passages. `claims` counts the sentences classified as claims and `tagged`
-    those of them that end with a tag. `listed` holds what is shown and never failed (ticket 88): before the paper
+    passage it is in when the linter read passages. `claims` counts the sentences classified as claims, and those the
+    classifier has not read that end with a tag other than `doc` (ticket 140), and `tagged` those of them that end
+    with a tag. `listed` holds what is shown and never failed (ticket 88): before the paper
     order, a claim tagged only `doc` and an untagged claim in an owner's passage; at an acceptance, a sentence the
     classifier has not classified.
     """
@@ -894,6 +895,12 @@ class _Pass:
                           else "a claim sentence ends with at least one provenance tag")
                 entry = dict(extra, sentence=sentence.text, problem=UNTAGGED_CLAIM, tag=None, detail=detail)
                 (self.listed if owner else self.problems).append(entry)
+        elif kind is None and any(end != "doc" for end in ends):
+            # Not read by the classifier yet (an offline render: the conductor's, the tick's), but it ends with the
+            # provenance a claim carries, and nothing says it is not one: it counts as a claim, and a tagged one
+            # (ticket 140: the toy's night journaled `claims: 0` for a report of 175 tagged findings).
+            self.claims += 1
+            self.tagged += 1
         elif kind is None and not ends:
             self.unclassified += 1
             entry = dict(extra, sentence=sentence.text, problem=UNCLASSIFIED, tag=None,

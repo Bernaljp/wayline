@@ -28,6 +28,7 @@
               "gpu": {"type": "integer", "minimum": 0},
               "cpu": {"type": "integer", "minimum": 1},
               "ram_gb": {"type": "number", "minimum": 0},
+              "gpu_mem_gb": {"type": "number", "minimum": 0, "description": "the GPU memory one job needs, for a job that uses a card lightly: such jobs share it while their needs fit"},
               "wallclock_minutes": {"type": "integer", "minimum": 1}
             }
           },
