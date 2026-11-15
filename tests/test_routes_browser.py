@@ -14,6 +14,8 @@ from tests.browser import Browser, find_chromium
 from tests.test_dashboard_marks import TOKEN, MarksServedCase
 from tests.test_dashboard_paper import MidwayServedCase
 from tests.test_dashboard_views import DrawnProjectCase
+from tests import reading_fixture
+from tests.test_paper_reading import ReadingCase
 
 CHROMIUM = find_chromium()
 
@@ -236,3 +238,107 @@ class MarksRouteTest(BrowserCase, MarksServedCase):
         self.page.click("[...document.querySelectorAll('#marks-body .pager button')].find((button) => button.textContent === 'next')")
         self.page.wait_for("%s.length === 1 && %s[0] === '%s.2'" % (shown, shown, self.plots["id"]))
         self.assertLessEqual(self.page.evaluate("document.documentElement.scrollWidth"), 390, json.dumps(self.shown()))
+
+
+# The chat's POST, caught in the page before it leaves: what a Comment would send, with no session started.
+CATCH_CHAT = """(() => {
+  window.chatSent = [];
+  const real = window.fetch;
+  window.fetch = (url, options) => {
+    if (String(url).endsWith('/chat') && options && options.method === 'POST') {
+      window.chatSent.push(JSON.parse(options.body));
+      return Promise.resolve(new Response(JSON.stringify({ ok: true, message: { id: 1 } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    return real(url, options);
+  };
+})()"""
+SENTENCE = "document.querySelector('#reading-article [data-item=\"%s\"]')"
+
+
+@unittest.skipUnless(CHROMIUM, "no Chromium on this machine (set WAYLINE_CHROMIUM to one)")
+class ReadingRouteTest(BrowserCase, ReadingCase):
+    """The paper's reading view (ticket 141), in the browser: prose with math and no tags, the lenses and their legend,
+    the panel a click opens, and Comment and This is wrong handing the sentence's id to the chat."""
+
+    token = "a-token-the-reading-view-comments-with"
+
+    def open(self, route=""):
+        self.page.goto("http://%s:%d/?token=%s%s" % (self.host, self.port, self.token, route))
+
+    def drawn(self):
+        self.page.wait_for("document.body.dataset.view === 'reading' && " + SENTENCE % "results.s1")
+
+    def test_the_main_text_reads_as_prose_with_its_math_and_no_tags(self):
+        self.open(self.route("paper/read"))
+        self.drawn()
+        text = self.page.evaluate("document.getElementById('reading-article').innerText")
+        self.assertNotIn("{res:", text)
+        self.assertNotIn("{#O1}", text)
+        self.assertIn("a mean paired gain of 0.0872.", text)
+        self.assertTrue(self.page.evaluate("Boolean(document.querySelector('#reading-article .paper-title .katex, #reading-article .katex'))"))
+        self.assertEqual(self.page.evaluate("[...document.querySelectorAll('#reading-article .quiet-id')].map((id) => id.textContent).slice(0, 3)"),
+                         ["O1", "R1", "R2"])
+        self.assertEqual(self.page.evaluate("document.querySelector('#views a[data-route=\"paper\"]').getAttribute('aria-current')"), "true")
+
+    def test_the_lens_retints_every_sentence_its_legend_follows_and_the_choice_is_kept(self):
+        self.open(self.route("paper/read"))
+        self.drawn()
+        tint = "getComputedStyle(%s).textDecorationStyle" % (SENTENCE % "results.s1")
+        self.assertEqual(self.page.evaluate(tint), "solid")
+        self.assertIn("this project's results (res)", self.page.evaluate("document.getElementById('reading-legend').innerText"))
+        self.page.click("document.querySelector('#reading-lens button[data-choice=\"check\"]')")
+        self.page.wait_for("document.getElementById('reading-article').dataset.lens === 'check'")
+        self.assertEqual(self.page.evaluate("getComputedStyle(%s).textDecorationStyle" % (SENTENCE % "results.s2")), "wavy", "a failed check")
+        self.assertIn("a check failed it", self.page.evaluate("document.getElementById('reading-legend').innerText"))
+        self.page.evaluate("location.reload()")
+        self.drawn()
+        self.assertEqual(self.page.evaluate("document.getElementById('reading-article').dataset.lens"), "check")
+
+    def test_paper_links_to_the_reading_view_and_back_returns_to_paper(self):
+        self.open(self.route("paper"))
+        self.page.wait_for("document.querySelector('#paper-parts-body a.action[href$=\"/paper/read\"]')")
+        self.page.click("document.querySelector('#paper-parts-body a.action[href$=\"/paper/read\"]')")
+        self.drawn()
+        self.page.evaluate("history.back()")
+        self.page.wait_for("document.body.dataset.view === 'paper' && location.hash.endsWith('/paper')")
+
+    def test_a_click_opens_the_panel_with_the_value_its_tag_holds_and_comment_sends_the_id(self):
+        self.open(self.route("paper/read"))
+        self.drawn()
+        pinned = self.page.evaluate("[...document.querySelectorAll('#reading-article .sentence')].find((node) => "
+                                    "node.textContent.includes('smoke run')).dataset.item")
+        self.page.click(SENTENCE % pinned)
+        self.page.wait_for("!document.getElementById('reading-panel').hidden")
+        panel = self.page.evaluate("document.getElementById('reading-panel-body').innerText")
+        self.assertIn("BASE_AUROC = %s" % reading_fixture.BASE_AUROC, panel)
+        self.assertIn("t3-a1-f1", panel)
+        self.page.evaluate(CATCH_CHAT)
+        self.page.click("document.getElementById('reading-comment')")
+        self.page.wait_for("document.getElementById('chat-text').value.startsWith('Comment on %s: ')" % pinned)
+        self.page.evaluate("document.getElementById('chat-text').value += 'is this the CPU value?'")
+        self.page.evaluate("document.getElementById('chat-form').requestSubmit()")
+        self.page.wait_for("window.chatSent.length === 1")
+        sent = self.page.evaluate("window.chatSent[0]")
+        self.assertEqual((sent["item"], sent["view"]), (pinned, "paper"), "the reading view is Paper's, which the chat knows")
+
+    def test_this_is_wrong_names_the_figure_and_an_item_link_lands_on_its_panel(self):
+        self.open(self.route("F1"))
+        self.page.wait_for("document.body.dataset.view === 'reading' && !document.getElementById('reading-panel').hidden")
+        self.assertTrue(self.page.evaluate("location.hash.endsWith('/paper/read')"))
+        panel = self.page.evaluate("document.getElementById('reading-panel-body').innerText")
+        self.assertIn(reading_fixture.HONESTY_FINDING, panel)
+        self.assertIn("paired lines", panel)
+        self.page.click("document.getElementById('reading-wrong')")
+        self.page.wait_for("document.getElementById('chat-text').value.startsWith('This is wrong (F1): ')")
+
+    def test_the_view_keeps_to_the_phones_width_with_the_panel_as_a_bottom_sheet(self):
+        self.page.screen(390, 844, mobile=True)
+        self.open(self.route("paper/read"))
+        self.drawn()
+        self.assertLessEqual(self.page.evaluate("document.documentElement.scrollWidth"), 390, json.dumps(self.shown()))
+        self.page.click(SENTENCE % "results.s1")
+        self.page.wait_for("!document.getElementById('reading-panel').hidden")
+        box = self.page.evaluate("(() => { const box = document.getElementById('reading-panel').getBoundingClientRect(); "
+                                 "return [Math.round(box.bottom), Math.round(box.width), innerHeight]; })()")
+        self.assertEqual((box[0], box[1]), (box[2], 390), "a bottom sheet the width of the screen")
+        self.assertLessEqual(self.page.evaluate("document.documentElement.scrollWidth"), 390)

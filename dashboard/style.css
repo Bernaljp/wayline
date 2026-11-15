@@ -46,6 +46,9 @@
   --index-w: 168px;
   --page: calc(var(--measure) + var(--index-w) + var(--space-5));
   --header-h: 88px;
+  /* The reading view's panel (ticket 141): its width beside the text, and how tall it is as a phone's bottom sheet. */
+  --panel-w: min(420px, 40vw);
+  --sheet-h: 70dvh;
 
   --ui: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --mono: var(--ui);
@@ -86,6 +89,26 @@
   --node-needs-human: #f4d3ab;
   --node-parked: #dcdcd8;
   --node-frontier: #b9ddd7;
+
+  /* The reading view's lenses (ticket 141): each class a color and a soft tint behind its text, with the underline
+     style the rules below give it, so no class is told apart by its hue alone. */
+  --src-owner: #6d28a8;      --src-owner-soft: #efe5f8;
+  --src-result: #1d5fa8;     --src-result-soft: #e2edf9;
+  --src-code: #8a5a00;       --src-code-soft: #f6ecd3;
+  --src-literature: #116b3d; --src-literature-soft: #dcf0e3;
+  --src-document: #9a3d12;   --src-document-soft: #f8e4d9;
+  --src-unresolved: #a52725;
+  --src-untagged: #6a737d;
+  --obj-1: #1d5fa8; --obj-1-soft: #e2edf9;
+  --obj-2: #b4530a; --obj-2-soft: #fbe8d8;
+  --obj-3: #116b3d; --obj-3-soft: #dcf0e3;
+  --obj-4: #6d28a8; --obj-4-soft: #efe5f8;
+  --obj-5: #0f766e; --obj-5-soft: #d9efec;
+  --obj-6: #a3195b; --obj-6-soft: #f8e1ec;
+  --obj-aside: #8b939c; --obj-aside-soft: #eceeeb;
+  --plot-ground: #ffffff;   /* a figure's ground: white in both themes, as it is printed */
+  --chk-passed: #116b3d; --chk-passed-soft: #dcf0e3;
+  --chk-failed: #a52725; --chk-failed-soft: #f8dfdd;
 }
 
 /* Night and day. The page follows the system until the owner says otherwise in the header, and
@@ -123,6 +146,23 @@
     --node-needs-human: #472c13;
     --node-parked: #171d25;
     --node-frontier: #123630;
+
+    --src-owner: #c39cea;      --src-owner-soft: #2a1b3b;
+    --src-result: #7ab6f0;     --src-result-soft: #11253b;
+    --src-code: #ddb14f;       --src-code-soft: #33290d;
+    --src-literature: #62cf94; --src-literature-soft: #0f2e1f;
+    --src-document: #eda077;   --src-document-soft: #3a2013;
+    --src-unresolved: #ef7f88;
+    --src-untagged: #8f9aa7;
+    --obj-1: #7ab6f0; --obj-1-soft: #11253b;
+    --obj-2: #f0a463; --obj-2-soft: #3a2310;
+    --obj-3: #62cf94; --obj-3-soft: #0f2e1f;
+    --obj-4: #c39cea; --obj-4-soft: #2a1b3b;
+    --obj-5: #4fc7b6; --obj-5-soft: #0d2a27;
+    --obj-6: #f08cba; --obj-6-soft: #3a1426;
+    --obj-aside: #6f7a86; --obj-aside-soft: #1a2129;
+    --chk-passed: #62cf94; --chk-passed-soft: #0f2e1f;
+    --chk-failed: #ef7f88; --chk-failed-soft: #3d1b1d;
   }
 }
 
@@ -155,6 +195,23 @@
   --node-needs-human: #472c13;
   --node-parked: #171d25;
   --node-frontier: #123630;
+
+  --src-owner: #c39cea;      --src-owner-soft: #2a1b3b;
+  --src-result: #7ab6f0;     --src-result-soft: #11253b;
+  --src-code: #ddb14f;       --src-code-soft: #33290d;
+  --src-literature: #62cf94; --src-literature-soft: #0f2e1f;
+  --src-document: #eda077;   --src-document-soft: #3a2013;
+  --src-unresolved: #ef7f88;
+  --src-untagged: #8f9aa7;
+  --obj-1: #7ab6f0; --obj-1-soft: #11253b;
+  --obj-2: #f0a463; --obj-2-soft: #3a2310;
+  --obj-3: #62cf94; --obj-3-soft: #0f2e1f;
+  --obj-4: #c39cea; --obj-4-soft: #2a1b3b;
+  --obj-5: #4fc7b6; --obj-5-soft: #0d2a27;
+  --obj-6: #f08cba; --obj-6-soft: #3a1426;
+  --obj-aside: #6f7a86; --obj-aside-soft: #1a2129;
+  --chk-passed: #62cf94; --chk-passed-soft: #0f2e1f;
+  --chk-failed: #ef7f88; --chk-failed-soft: #3d1b1d;
 }
 
 :root[data-theme="light"] { color-scheme: light; }
@@ -505,7 +562,7 @@ dl.fields dd.mono { color: var(--ink-2); }
 /* Where a ticket stands, said once as a color, and read by whatever shows it: a chip's text, a
    journal event's name, a board card's leading edge, and a graph node's ring. A status with no rule
    here (open, and anything new) falls back to each reader's own neutral. */
-.s-done, .s-accepted { --status: var(--done); }
+.s-done, .s-accepted, .s-passed { --status: var(--done); }
 .s-running { --status: var(--running); }
 .s-failed, .s-blocked, .s-needs_human { --status: var(--failed); }
 .s-paused, .s-parked { --status: var(--paused); }
@@ -1106,6 +1163,95 @@ main { padding-bottom: calc(var(--space-6) + var(--space-5)); }
 .hand-over-drop { padding: var(--space-3); }
 .hand-over-drop input[type="file"] { max-width: 100%; }
 
+/* --- reading the paper (ticket 141) ------------------------------------------------------------
+   The main text as prose. Each sentence carries its source, its objective's shade, and its check as data attributes;
+   the article's lens picks which one tints it. A tint is a soft background, a colored underline, and the underline's
+   own style, so two classes never differ by hue alone; an untagged claim and a reference to be resolved are outlined
+   rather than tinted. */
+
+.reading-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3); }
+.legend-list { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+.legend-list li { display: flex; align-items: center; gap: var(--space-2); min-width: 0; font-size: var(--text-sm); }
+.legend-label { max-width: 42ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sentence.swatch { padding: 0 var(--space-1); font-family: var(--prose); cursor: default; }
+
+.paper-text { font-family: var(--prose); }
+article.paper-text { max-width: 74ch; font-size: var(--text-lg); line-height: 1.75; color: var(--ink); }
+.paper-text .paper-title { font-size: var(--text-xl); line-height: 1.4; margin: 0 0 var(--space-4); font-family: var(--prose); letter-spacing: 0; text-transform: none; }
+.paper-text .part-head {
+  font-size: var(--text-md); letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim);
+  margin: var(--space-6) 0 var(--space-2); border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+}
+.paper-text .paper-heading { font-size: var(--text-lg); margin: var(--space-5) 0 var(--space-2); display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
+.paper-text .quiet-id { font-family: var(--ui); font-size: var(--text-xs); font-weight: 400; color: var(--dim); letter-spacing: 0; text-transform: none; }
+.paper-text .paper-paragraph { margin: 0 0 var(--space-3); overflow-wrap: anywhere; }
+.paper-code { overflow-x: auto; font-size: var(--text-sm); background: var(--surface-2); padding: var(--space-2); }
+
+.paper-text .sentence {
+  --tint: transparent; --mark: transparent; --style: solid; --ring: transparent;
+  background: var(--tint); text-decoration-line: underline; text-decoration-style: var(--style); text-decoration-color: var(--mark);
+  text-decoration-thickness: 2px; text-underline-offset: 4px; outline: 1px dashed var(--ring); outline-offset: 1px;
+  border-radius: var(--radius-1); box-decoration-break: clone; -webkit-box-decoration-break: clone; cursor: pointer;
+}
+.paper-text .sentence:hover { background: color-mix(in srgb, var(--tint) 60%, var(--accent-soft)); }
+.paper-text .sentence:focus-visible, .paper-text .sentence.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.paper-text[data-lens="source"] [data-source="owner"] { --tint: var(--src-owner-soft); --mark: var(--src-owner); --style: double; }
+.paper-text[data-lens="source"] [data-source="result"] { --tint: var(--src-result-soft); --mark: var(--src-result); --style: solid; }
+.paper-text[data-lens="source"] [data-source="code"] { --tint: var(--src-code-soft); --mark: var(--src-code); --style: dotted; }
+.paper-text[data-lens="source"] [data-source="literature"] { --tint: var(--src-literature-soft); --mark: var(--src-literature); --style: dashed; }
+.paper-text[data-lens="source"] [data-source="document"] { --tint: var(--src-document-soft); --mark: var(--src-document); --style: wavy; }
+.paper-text[data-lens="source"] [data-source="unresolved"] { --ring: var(--src-unresolved); --mark: var(--src-unresolved); --style: wavy; }
+.paper-text[data-lens="source"] [data-source="untagged"] { --ring: var(--src-untagged); }
+
+.paper-text[data-lens="objective"] [data-objective="1"] { --tint: var(--obj-1-soft); --mark: var(--obj-1); --style: solid; }
+.paper-text[data-lens="objective"] [data-objective="2"] { --tint: var(--obj-2-soft); --mark: var(--obj-2); --style: dashed; }
+.paper-text[data-lens="objective"] [data-objective="3"] { --tint: var(--obj-3-soft); --mark: var(--obj-3); --style: dotted; }
+.paper-text[data-lens="objective"] [data-objective="4"] { --tint: var(--obj-4-soft); --mark: var(--obj-4); --style: double; }
+.paper-text[data-lens="objective"] [data-objective="5"] { --tint: var(--obj-5-soft); --mark: var(--obj-5); --style: wavy; }
+.paper-text[data-lens="objective"] [data-objective="6"] { --tint: var(--obj-6-soft); --mark: var(--obj-6); --style: solid; }
+.paper-text[data-lens="objective"] [data-objective="aside"] { --tint: var(--obj-aside-soft); --mark: var(--obj-aside); --style: dotted; }
+
+.paper-text[data-lens="check"] [data-check="passed"] { --tint: var(--chk-passed-soft); --mark: var(--chk-passed); --style: solid; }
+.paper-text[data-lens="check"] [data-check="failed"] { --tint: var(--chk-failed-soft); --mark: var(--chk-failed); --style: wavy; }
+
+/* A figure is framed in its sentence's colors: dashed where its underline would be dashed or wavy. */
+.paper-text .paper-figure {
+  --tint: transparent; --mark: var(--line-strong); --style: solid; --ring: transparent;
+  margin: var(--space-4) 0; padding: var(--space-3); border: 3px solid var(--mark); background: var(--tint); cursor: pointer;
+  font-size: var(--text-md); line-height: 1.6;
+}
+.paper-text .paper-figure[data-source="untagged"],
+.paper-text[data-lens="check"] .paper-figure[data-check="failed"],
+.paper-text[data-lens="objective"] .paper-figure[data-objective="2"] { border-style: dashed; }
+.paper-text .paper-figure:focus-visible, .paper-text .paper-figure.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* A figure is drawn on white in either theme, as Marks shows a plot. */
+.paper-figure img { display: block; max-width: 100%; height: auto; margin: 0 auto var(--space-2); background: var(--plot-ground); }
+
+/* The panel: beside the text, under the header, out of the polls' reach; a bottom sheet on a phone. */
+.reading-panel {
+  position: fixed; right: var(--gutter); top: calc(var(--header-h) + var(--space-3)); bottom: var(--space-4); z-index: 25;
+  width: var(--panel-w); display: flex; flex-direction: column;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line-strong); border-radius: var(--radius-2);
+}
+.reading-panel[hidden] { display: none; }
+.reading-panel .viewer-bar h2 { font-size: var(--text-md); overflow-wrap: anywhere; letter-spacing: 0; text-transform: none; }
+.reading-panel-body { flex: 1 1 auto; overflow-y: auto; padding: var(--space-3); min-width: 0; }
+.reading-panel-body blockquote {
+  margin: 0 0 var(--space-3); padding-left: var(--space-3); border-left: 3px solid var(--line-strong);
+  font-family: var(--prose); font-size: var(--text-md); line-height: 1.6; overflow-wrap: anywhere;
+}
+.reading-panel-body .sub { margin: var(--space-4) 0 var(--space-2); }
+.reading-panel-body ul.rows.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.reading-panel-body p { margin: 0; overflow-wrap: anywhere; }
+.reading-panel-body code.held {
+  display: block; margin-top: var(--space-1); padding: var(--space-1) var(--space-2); background: var(--surface-2);
+  font-size: var(--text-sm); overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.reading-panel-acts { display: flex; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-top: 1px solid var(--line); }
+body[data-panel="open"][data-view="reading"] #view-reading { padding-right: calc(var(--panel-w) + var(--space-4)); }
+pre.viewer-code { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-sm); }
+
 /* --- the narrow width, and reduced motion ----------------------------------------------------- */
 
 @media (max-width: 1180px) {
@@ -1147,6 +1293,15 @@ main { padding-bottom: calc(var(--space-6) + var(--space-5)); }
   /* Above the marks view's previous and next, which a phone holds at the bottom of the screen. */
   body[data-view="marks"] .chat-open { bottom: calc(44px + 2 * var(--space-2) + var(--space-2)); }
   body[data-chat="open"] { overflow: hidden; }
+  /* The reading panel is a bottom sheet a thumb reaches, the text above it still in view. */
+  .reading-panel {
+    left: 0; right: 0; top: auto; bottom: 0; width: 100vw; max-height: var(--sheet-h);
+    border-width: 1px 0 0; border-radius: var(--radius-2) var(--radius-2) 0 0;
+  }
+  .reading-panel-acts button.action, #reading-panel-close { min-height: 44px; }
+  body[data-panel="open"][data-view="reading"] #view-reading { padding-right: 0; padding-bottom: var(--sheet-h); }
+  article.paper-text { font-size: var(--text-md); }
+  .legend-label { max-width: 28ch; }
 }
 
 @media (prefers-reduced-motion: reduce) {

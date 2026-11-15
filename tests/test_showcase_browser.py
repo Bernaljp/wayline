@@ -121,6 +121,32 @@ class ShowcaseBrowserTest(unittest.TestCase):
                 self.assertLessEqual(self.page.evaluate("document.documentElement.scrollWidth"), 390)
                 self.shoot("phone-%s" % view)
 
+    def test_the_reading_view_draws_the_toys_paper_light_and_dark_at_a_desk_and_on_a_phone(self):
+        """Ticket 141: the toy's main text as prose with its tints, then a sentence's panel, in both themes and widths."""
+        # A result sentence on one line: the click lands on the middle of its box, which for a sentence wrapped over two
+        # lines can be the space between two sentences.
+        drawn = ("[...document.querySelectorAll('#reading-article .sentence[data-source=\"result\"]')]"
+                 ".find((node) => node.getClientRects().length === 1)")
+        for width, height, mobile, screen in ((1400, 900, False, "desktop"), (390, 844, True, "phone")):
+            for theme in ("light", "dark"):
+                with self.subTest(screen=screen, theme=theme):
+                    self.page.screen(width, height, mobile=mobile)
+                    self.page.send("Emulation.setEmulatedMedia", {"features": [{"name": "prefers-color-scheme", "value": theme}]})
+                    self.open("paper/read")
+                    self.settled("reading")
+                    self.page.wait_for(drawn)
+                    article = self.page.evaluate("document.getElementById('reading-article').innerText")
+                    self.assertNotIn("{res:", article)
+                    self.assertIn("this project's results (res)", self.page.evaluate("document.getElementById('reading-legend').innerText"))
+                    self.assertLessEqual(self.page.evaluate("document.documentElement.scrollWidth"), width)
+                    self.shoot("reading-%s-%s" % (screen, theme))
+                    self.page.click(drawn)
+                    self.page.wait_for("!document.getElementById('reading-panel').hidden")
+                    self.assertIn("run", self.page.evaluate("document.getElementById('reading-panel-body').innerText"))
+                    self.assertLessEqual(self.page.evaluate("document.documentElement.scrollWidth"), width)
+                    self.shoot("reading-panel-%s-%s" % (screen, theme))
+        self.answered()
+
     def test_the_banners_first_link_is_the_published_paper(self):
         self.open("research")
         self.settled("research")

@@ -71,6 +71,7 @@ COVERAGE = {
     "api_research": RECORDED,
     "api_run": RECORDED,
     "api_paper": RECORDED,
+    "api_paper_read": RECORDED,
     "api_inherited": RECORDED,
     "api_marks": RECORDED,
     "api_waiting": RECORDED,
@@ -84,7 +85,7 @@ COVERAGE = {
 
 # What the page polls for the project it shows, after `/api/projects` and beside the journal's tail.
 VIEWS = ("overview", "graph.svg", "tickets", "outputs", "decisions", "changes", "research", "run", "paper", "inherited",
-         "marks", "waiting", "chat", "paper/card")
+         "marks", "waiting", "chat", "paper/card", "paper/read")
 # Items the page links by name rather than by a numbered id.
 NAMED_ITEMS = ("report", "account", "outline") + tuple(sections.SECTIONS)
 # An item id where a view or a rendered file writes one: the lettered kinds of `dashboard_views.ITEM_ID`, unanchored.
@@ -95,7 +96,8 @@ PUBLISHED = ("drawings", "figures", "research/drawings", "research/paper", docs.
 SMALL_RESULT = 64 * 1024  # a JSON file under `results/` is kept up to this size; the tables and arrays are not
 NEVER_NAMES = frozenset({"stream.jsonl", "stderr.txt", "env.json", "settings.json", "pid", ".env"})
 NEVER_ROOTS = (".git/", ".worktrees/", ".wayline/", ".claude/")
-KEPT_CACHE = (docs.HTML_DIR.as_posix() + "/", docs.CHECKS_JSON.as_posix())
+# The built site, its checks, and the claim classes the reading view reads (ticket 141).
+KEPT_CACHE = (docs.HTML_DIR.as_posix() + "/", docs.CHECKS_JSON.as_posix(), "research/.cache/claims.json")
 # Where the build extracts the snapshot; no recording may name it (`tests/test_showcase.py`).
 SCRATCH_PREFIX = "wayline-showcase-build-"
 SECRET = re.compile(rb"sk-ant-[a-z0-9]{2,8}-[A-Za-z0-9_\-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|"

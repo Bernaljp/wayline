@@ -139,6 +139,23 @@
   </section>
   </div>
 
+  <!-- Reading the paper (ticket 141): a sub-view of Paper at #/<project>/paper/read, the current version's main text as
+       prose, each claim tinted by where it comes from under one of three lenses. A click opens the sentence's panel. -->
+  <div class="view" id="view-reading" data-view="reading" hidden>
+  <section id="reading" aria-labelledby="reading-heading">
+    <div class="view-head"><h2 id="reading-heading">Reading the paper</h2>
+      <p class="note">The main text as prose, tags hidden. Click a sentence or a figure to see what stands behind it.</p></div>
+    <div class="reading-bar">
+      <a id="reading-back" class="action">back to Paper</a>
+      <div id="reading-lens" class="switch" role="group" aria-label="lens"></div>
+    </div>
+    <div id="reading-legend" class="legend" aria-label="what the tints mean"></div>
+    <div id="reading-body" class="panel">
+      <p class="state loading">reading the paper</p>
+    </div>
+  </section>
+  </div>
+
   <div class="view" id="view-inherited" data-view="inherited" hidden>
   <section id="inherited-documents" aria-labelledby="inherited-documents-heading">
     <div class="view-head"><h2 id="inherited-documents-heading">Documents</h2></div>
@@ -394,6 +411,20 @@
     <button type="button" class="action" id="editor-take-theirs">take the new version</button>
   </div>
 </dialog>
+
+<!-- A sentence's or a figure's panel in the reading view (ticket 141): beside the text, a bottom sheet on a phone. It
+     sits outside the panels the polls redraw, so a poll never closes it; Comment and This is wrong go to the chat. -->
+<aside id="reading-panel" class="reading-panel" aria-labelledby="reading-panel-title" hidden>
+  <div class="viewer-bar">
+    <h2 id="reading-panel-title"></h2>
+    <button type="button" class="action" id="reading-panel-close">close</button>
+  </div>
+  <div id="reading-panel-body" class="reading-panel-body"></div>
+  <div class="reading-panel-acts acts">
+    <button type="button" class="action" id="reading-comment">Comment</button>
+    <button type="button" class="action" id="reading-wrong">This is wrong</button>
+  </div>
+</aside>
 
 <!-- The chat (ticket 114): one panel over every view, the conversation with one project, the whole screen on a phone.
      It sits outside the panels the polls redraw, so a message being written survives every poll. -->

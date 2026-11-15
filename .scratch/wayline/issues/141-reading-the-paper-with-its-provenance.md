@@ -24,16 +24,16 @@ Not part of this ticket:
 
 **Blocked by:** None - can start immediately. It reads the paper parts as ticket 139 left them (merged).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#355](https://github.com/Bernaljp/wayline/issues/355) (mirror; the local file is the source)
 
 **Milestone:** after M8 (v1.1.x). **Spec:** Implementation Decision 17 (the dashboard: the Paper view, item links, the popup viewer, the chat's item; the paper order and its parts; the provenance linter's tags), 8 (the dashboard), 9 (the provenance linter); ticket 122's live record; the owner's request of 2026-11-15.
 
-- [ ] `GET /api/projects/<id>/paper/read` returns the current version's main text as headings, sentences, and figures, each sentence with its source class, resolved tags and their values, passage or finding, ticket, run, result, objectives, checks, and the part's alternatives; read-only, no model, `etag` as the other views; tested over HTTP against a fixture composed paper, including a sentence with no tag, a `ref` still to be resolved, a failed numbers check, an alternative, and a figure.
-- [ ] The reading view at `#/<project>/paper/read`: prose with KaTeX math and hidden tags, the three lenses with a legend, tint plus underline style, legible in light and dark and at phone width; linked from the Paper view's parts and each compilation.
-- [ ] A click on a sentence or a figure opens the panel (a bottom sheet at phone width) with everything listed above, its links opening the artifact, the verdict, and the item links in the viewer; **Comment** and **This is wrong** post to the chat with the sentence's or figure's item id.
-- [ ] The new item id form is in `dashboard_views.ITEM_ID` and its docstring, and the chat accepts it.
-- [ ] The showcase follows: `showcase/build.py`'s `COVERAGE` names the new route, the recorded site serves the reading view of the toy's paper, and `tests/test_showcase_browser.py` waits on it; the CI screenshots show it at desktop and phone width, light and dark.
-- [ ] The spec's decision 17 dashboard bullet gains the reading view in the Paper view's list, the user guide's `docs/guide/paper.md` says how to read the paper this way, and `CHANGELOG.md`'s `## Unreleased` describes it.
-- [ ] `python -m unittest` passes (the browser modules on CI).
+- [x] `GET /api/projects/<id>/paper/read` returns the current version's main text as headings, sentences, and figures, each sentence with its source class, resolved tags and their values, passage or finding, ticket, run, result, objectives, checks, and the part's alternatives; read-only, no model, `etag` as the other views; tested over HTTP against a fixture composed paper, including a sentence with no tag, a `ref` still to be resolved, a failed numbers check, an alternative, and a figure.
+- [x] The reading view at `#/<project>/paper/read`: prose with KaTeX math and hidden tags, the three lenses with a legend, tint plus underline style, legible in light and dark and at phone width; linked from the Paper view's parts and each compilation.
+- [x] A click on a sentence or a figure opens the panel (a bottom sheet at phone width) with everything listed above, its links opening the artifact, the verdict, and the item links in the viewer; **Comment** and **This is wrong** post to the chat with the sentence's or figure's item id.
+- [x] The new item id form is in `dashboard_views.ITEM_ID` and its docstring, and the chat accepts it.
+- [x] The showcase follows: `showcase/build.py`'s `COVERAGE` names the new route, the recorded site serves the reading view of the toy's paper, and `tests/test_showcase_browser.py` waits on it; the CI screenshots show it at desktop and phone width, light and dark.
+- [x] The spec's decision 17 dashboard bullet gains the reading view in the Paper view's list, the user guide's `docs/guide/paper.md` says how to read the paper this way, and `CHANGELOG.md`'s `## Unreleased` describes it.
+- [x] `python -m unittest` passes (the browser modules on CI).

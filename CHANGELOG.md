@@ -33,6 +33,24 @@ refuses a project made before it, which keeps its old tag or starts again on the
 project from the old one's materials), every verb that writes to it refuses with the same message, and the dashboard
 lists it read-only, marked with its tag.
 
+- Reading the paper with its provenance (ticket 141; Implementation Decision 17). The Paper view's parts and each
+  compilation link a reading view, `#/<project>/paper/read`: the current version's title, abstract, and main text
+  (`paper.MAIN_TEXT`) as prose with KaTeX math and the tags hidden, each heading's objective or result id a quiet
+  link. Each claim sentence is tinted by a color and an underline style under one of three lenses, kept per browser:
+  by source (the owner's passage, a `res` result, `code`, the literature, an inherited `doc`, and outlined when
+  untagged or still to be resolved), by objective (parked ones grey), or by check (the journal's `verdict` events
+  and the paper's `builds`, never a model), with a legend. A click opens a side panel, a bottom sheet on a phone:
+  each tag resolved to its run, file, and the value its locator holds as the numbers check reads it, the finding or
+  passage it was written from with its ticket and run, its result and objective, each check with its verdict, and
+  the part's alternatives; a figure shows its `figure_result` (caption, data, script, ranked candidates, machine
+  checks, honesty verdict). **Comment** and **This is wrong** put the owner's note into the chat with the item id
+  attached, a sentence's new form `<part>.s<n>` (`results.s12`) or a figure's `F<n>`, both in
+  `dashboard_views.ITEM_ID`; an item link to one opens the reading view at it, and one the version no longer holds is
+  not found. The view reads one new route, `GET /api/projects/<id>/paper/read` (`wayline.paper_reading`), built by
+  code from the parts and the ledger with no model call and no write, tagged by the ledger and the paper's files. The
+  showcase records it (`COVERAGE`), its browser test screenshots it at desktop and phone width in light and dark, and
+  a later `--snapshot` keeps `research/.cache/claims.json`, which tells an untagged claim from a sentence that is none.
+
 - Harness sessions start none of the owner's MCP servers or plugins (ticket 130; Implementation Decisions 3, and 5
   for the `/usage` reading). Every launch line (`worker.build_argv`: a ticket's worker, a verdict, the decider, the
   chat, every other role, and each resume) and the tick's `/usage` reading pass `--strict-mcp-config --mcp-config
