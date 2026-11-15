@@ -10,12 +10,12 @@ On the toy's live run (ticket 122, `docs/verification/m8.md`), drawings R4 and R
 
 **Blocked by:** None - can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **GitHub:** [#342](https://github.com/Bernaljp/wayline/issues/342) (mirror; the local file is the source)
 
 **Milestone:** after M8 (v1.1.x). **Spec:** Implementation Decision 17 (drawings and plots; the provenance linter's tags), 9 (the provenance linter); ticket 100; ticket 122's live record.
 
-- [ ] The plotter's prompt names the `{res:...}` form; a test reads every role prompt that asks for tags.
-- [ ] A sentence ending in `[res:...]` fails with a message naming the right form.
-- [ ] `python -m unittest` passes.
+- [x] The plotter's prompt names the `{res:...}` form; a test reads every role prompt that asks for tags.
+- [x] A sentence ending in `[res:...]` fails with a message naming the right form.
+- [x] `python -m unittest` passes.

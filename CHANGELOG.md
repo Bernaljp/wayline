@@ -64,6 +64,13 @@ lists it read-only, marked with its tag.
   `showcase` workflow builds it on every pull request and opens every view in Chrome, keeping screenshots, and
   publishes it on every push to master, so it shows the interface master has; `tests/test_showcase.py` fails on a
   GET route `COVERAGE` does not account for, and `tests/test_showcase_browser.py` on a request no recording answers.
+- The plotter writes the harness's tag form (ticket 135; Implementation Decisions 9 and 17). The plotter's prompt
+  states it, `{res:<run-id>/<artifact>#<locator>}` with an example at a drawing's `numbers.json`; on the M8 toy run
+  drawings R4 and R5 wrote `[res:...]`, which the linter does not read, and failed as untagged claims twice. The
+  linter's `untagged_claim` now names the three forms that support a claim, and for a sentence ending in a tag in
+  square brackets (`[res:...]`, `[code:...]`, any kind) says "tags are written `{res:...}`, in braces", which the
+  conductor's lint check hands the resume. `tests/test_prompt.py` checks that every role prompt asking for tagged
+  sentences states the form.
 - The ticket graph draws a ticket blocked by two tickets one of which blocks the other (`dag._layers`). The layering
   pushed every pending parent at once and took a parent still waiting for its sibling's sake for a cycle, so the
   dashboard's graph of the M8 toy run (ticket 96 blocked by 115 and 116, and 116 by 115) answered 500, "the edges form
